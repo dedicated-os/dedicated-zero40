@@ -1,0 +1,15 @@
+ignore SDL_RenderSetLogicalSize from drastic
+ignore SDL_RenderCopy from drastic
+do all drawing myself in SDL_RenderPresent
+
+-----------------------------------------------
+
+Look up program function (eg. Drastic's quit)
+
+	nm ./drastic | grep quit
+	0000000000089c70 T lua_quit
+	000000000008a110 T platform_quit
+	000000000000e8d0 T quit
+	000000000007a260 T select_quit
+
+then in Cutter find sym.quit, show Xrefs, and trace its args up through the call sites 
