@@ -163,22 +163,35 @@ static void Settings_setBrightness(int value) {
 // real function handles
 // --------------------------------------------
 
-static int  (*real_SDL_Init)(Uint32) = NULL;
+static int (*real_SDL_Init)(Uint32) = NULL;
 static SDL_Window* (*real_SDL_CreateWindow)(const char*, int, int, int, int, Uint32) = NULL;
 static void (*real_SDL_SetWindowSize)(SDL_Window *, int, int) = NULL;
-static int  (*real_SDL_RenderSetLogicalSize)(SDL_Renderer*, int, int) = NULL;
+static int (*real_SDL_RenderSetLogicalSize)(SDL_Renderer*, int, int) = NULL;
 static SDL_Renderer* (*real_SDL_CreateRenderer)(SDL_Window*, int, Uint32) = NULL;
+static int (*real_SDL_RenderClear)(SDL_Renderer *) = NULL;
 static void (*real_SDL_RenderPresent)(SDL_Renderer*) = NULL;
 static SDL_Texture* (*real_SDL_CreateTexture)(SDL_Renderer*, Uint32, int, int, int) = NULL;
 static void (*real_SDL_DestroyTexture)(SDL_Texture *) = NULL;
-static int  (*real_SDL_RenderCopy)(SDL_Renderer*, SDL_Texture*, const SDL_Rect*, const SDL_Rect*) = NULL;
+static int (*real_SDL_RenderCopy)(SDL_Renderer*, SDL_Texture*, const SDL_Rect*, const SDL_Rect*) = NULL;
 static int (*real_SDL_OpenAudio)(SDL_AudioSpec *desired, SDL_AudioSpec *obtained) = NULL;
-static int  (*real_SDL_PollEvent)(SDL_Event*) = NULL;
+static int (*real_SDL_PollEvent)(SDL_Event*) = NULL;
 
 static int (*real__libc_start_main)(int (*main)(int,char**,char**), int argc, char **ubp_av, void (*init)(void), void (*fini)(void), void (*rtld_fini)(void), void *stack_end) = NULL;
 static void (*real_exit)(int) __attribute__((noreturn)) = NULL;
 static void (*real__exit)(int) __attribute__((noreturn)) = NULL;
 static int (*real_system)(const char *) = NULL;
+
+// --------------------------------------------
+// TODO: tmp? SDL2 compat
+// --------------------------------------------
+
+typedef enum SDL_ScaleMode
+{
+    SDL_ScaleModeNearest, /**< nearest pixel sampling */
+    SDL_ScaleModeLinear,  /**< linear filtering */
+    SDL_ScaleModeBest     /**< anisotropic filtering */
+} SDL_ScaleMode;
+int SDL_SetTextureScaleMode(SDL_Texture * texture, SDL_ScaleMode scaleMode);
 
 // --------------------------------------------
 // logging
@@ -471,6 +484,23 @@ static int Device_handleEvent(SDL_Event* event) {
 			menu_combo = 0;
 		}
 		
+		if (event->jbutton.button==JOY_L2) {
+			settings.cropped = !settings.cropped;
+			if (settings.cropped) {
+				if (app.top) SDL_SetTextureScaleMode(app.top, SDL_ScaleModeNearest);
+				if (app.bottom) SDL_SetTextureScaleMode(app.bottom, SDL_ScaleModeNearest);
+			}
+			else {
+				if (app.top) SDL_SetTextureScaleMode(app.top, SDL_ScaleModeBest);
+				if (app.bottom) SDL_SetTextureScaleMode(app.bottom, SDL_ScaleModeBest);
+			}
+			return 1;
+		}
+		else if (event->jbutton.button==JOY_R2) {
+			settings.gapped = !settings.gapped;
+			return 1;
+		}
+		
 		if (event->jbutton.button==JOY_VOLUP) {
 			if (menu_down) {
 				if (settings.brightness<10) {
@@ -563,6 +593,10 @@ static void App_set(int i) {
 	strcpy(app.game_name, settings.game);
 	char *dot = strrchr(app.game_name, '.');
 	if (dot && dot!=app.game_name) *dot = '\0';
+	
+	SDL_Log("settings.game: %s", settings.game);
+	SDL_Log("app.game_path: %s", app.game_path);
+	SDL_Log("app.game_name: %s", app.game_name);
 }
 static void App_next(void) {
 	App_set(app.current+1);
@@ -625,6 +659,41 @@ static void App_quit(void) {
 	
 	Settings_save();
 }
+static void App_render(void) {
+	if (!app.renderer || !app.top || !app.bottom) return;
+	real_SDL_RenderClear(app.renderer);
+		
+	SDL_Rect rect1 = {0,0,256,192};
+	SDL_Rect rect2 = {0,0,256,192};
+	
+	if (settings.cropped) {
+		rect1.w *= 2;
+		rect1.h *= 2;
+
+		rect2.w *= 2;
+		rect2.h *= 2;
+
+		rect1.x -= 8 * 2;
+		rect2.x -= 8 * 2;
+	}
+	else {
+		rect1.w = rect2.w = 480;
+		rect1.h = rect2.h = 360;
+	}
+	
+	if (settings.gapped) {
+		rect2.y = 800 - rect2.h;
+	}
+	else {
+		rect2.y = rect1.h;
+		int oy = (800 - rect1.h*2) / 2;
+		rect1.y += oy;
+		rect2.y += oy;
+	}
+	
+	real_SDL_RenderCopy(app.renderer, app.top, NULL, &rect1);
+	real_SDL_RenderCopy(app.renderer, app.bottom, NULL, &rect2);
+}
 static void App_menu(void) {
 	// drastic_audio_pause(1);
 	
@@ -639,7 +708,6 @@ static void App_menu(void) {
 	int w = 1; // we can just stretch horizontally on the GPU
 	int h = 800;
 	SDL_Surface* tmp = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
-	// SDL_FillRect(surface, NULL, SDL_MapRGBA(surface->format, 0, 0, 0, 128));
 
 	uint32_t* d = tmp->pixels;
 	int total = w * h;
@@ -656,8 +724,8 @@ static void App_menu(void) {
 	
 	tmp = TTF_RenderUTF8_Blended(app.font, name, (SDL_Color){255,255,255,255});
 	int gw,gh;
-	gw = tmp->w / FONT_SCALE;
-	gh = tmp->h / FONT_SCALE;
+	gw = tmp->w;
+	gh = tmp->h;
 	SDL_Texture* game_name = SDL_CreateTextureFromSurface(app.renderer, tmp);
 	SDL_SetTextureBlendMode(game_name, SDL_BLENDMODE_BLEND);
 	SDL_FreeSurface(tmp);
@@ -720,8 +788,7 @@ static void App_menu(void) {
 		}
 		
 		// let the hook position them (for now)
-		SDL_RenderCopy(app.renderer, app.top, NULL, &(SDL_Rect){0,0,256,192});
-		SDL_RenderCopy(app.renderer, app.bottom, NULL, &(SDL_Rect){0,192,256,192});
+		App_render();
 		real_SDL_RenderCopy(app.renderer, texture, NULL, NULL);
 		real_SDL_RenderCopy(app.renderer, game_name, NULL, &(SDL_Rect){0,0,gw,gh});
 		real_SDL_RenderPresent(app.renderer);
@@ -737,35 +804,17 @@ static void App_menu(void) {
 // hook SDL
 // --------------------------------------------
 
-typedef enum SDL_ScaleMode
-{
-    SDL_ScaleModeNearest, /**< nearest pixel sampling */
-    SDL_ScaleModeLinear,  /**< linear filtering */
-    SDL_ScaleModeBest     /**< anisotropic filtering */
-} SDL_ScaleMode;
-int SDL_SetTextureScaleMode(SDL_Texture * texture, SDL_ScaleMode scaleMode);
-
 int SDL_Init(Uint32 flags) {
 	Settings_setBrightness(settings.brightness);
 	return real_SDL_Init(flags);
 }
 SDL_Window* SDL_CreateWindow(const char* title, int x, int y, int w, int h, Uint32 flags) {
-	// window size is always 480x800
-	app.window = real_SDL_CreateWindow(title, x, y, w, h, flags);
-
-	// int ww,wh;
-	// SDL_GetWindowSize(app.window, &ww, &wh);
-	// SDL_Log("SDL_CreateWindow() requested: %ix%i actual: %ix%i", w,h, ww,wh);
-
+	app.window = real_SDL_CreateWindow(title, x, y, w, h, flags); // window size is always 480x800
 	return app.window;
 }
 void SDL_SetWindowSize(SDL_Window* window, int w, int h) {
-	// SDL_Log("HOOK: SDL_SetWindowSize(%i, %i) - ignored");
-	// real_SDL_SetWindowSize(window, w, h);
-	
-	// int ww,wh;
-	// SDL_GetWindowSize(app.window, &ww, &wh);
-	// SDL_Log("window size: %ix%i", ww,wh);
+	// window size is always 480x800
+	// real_SDL_SetWindowSize(window, w, h); 
 }
 int SDL_PollEvent(SDL_Event* event) {
 	// loop is required to capture button presses
@@ -776,27 +825,7 @@ int SDL_PollEvent(SDL_Event* event) {
 		if (Device_handleEvent(event)) continue;
 		
 		if (event->type==SDL_JOYBUTTONDOWN) {
-			if (event->jbutton.button==JOY_L2) {
-				settings.cropped = !settings.cropped;
-				
-				if (settings.cropped) {
-					if (app.top) SDL_SetTextureScaleMode(app.top, SDL_ScaleModeNearest);
-					if (app.bottom) SDL_SetTextureScaleMode(app.bottom, SDL_ScaleModeNearest);
-				}
-				else {
-					if (app.top) SDL_SetTextureScaleMode(app.top, SDL_ScaleModeBest);
-					if (app.bottom) SDL_SetTextureScaleMode(app.bottom, SDL_ScaleModeBest);
-				}
-				
-				SDL_RenderSetLogicalSize(app.renderer,app.w,app.h);
-				continue;
-			}
-			else if (event->jbutton.button==JOY_R2) {
-				settings.gapped = !settings.gapped;
-				SDL_RenderSetLogicalSize(app.renderer,app.w,app.h);
-				continue;
-			}
-			else if (event->jbutton.button==JOY_MENU) {
+			if (event->jbutton.button==JOY_MENU) {
 				continue;
 			}
 		}
@@ -826,78 +855,23 @@ int SDL_PollEvent(SDL_Event* event) {
 }
 
 int SDL_RenderSetLogicalSize(SDL_Renderer *renderer, int w, int h) {
-	if (settings.cropped) {
-		w = 240;
-		h = 400;
-	}
-	else {
-		app.w = w;
-		app.h = h;
-
-		if (w==256) {
-			h = settings.gapped ? 426 : 384;
-		}
-	}
-	SDL_Log("HOOK: SDL_RenderSetLogicalSize(%d, %d)", w, h);
-	int result = real_SDL_RenderSetLogicalSize(renderer, w, h);
-	SDL_RenderClear(app.renderer);
-	SDL_RenderPresent(app.renderer);
-	SDL_RenderClear(app.renderer);
-	return result;
+	return 1; // complete render takeover
 }
 int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture  *texture, const SDL_Rect *srcrect, const SDL_Rect *dstrect) {
-	// return 1;
-	// LOG_render(renderer, texture, srcrect, dstrect);
-
-	if (settings.cropped) {
-		// game
-		if (dstrect) {
-			srcrect = &(SDL_Rect){8,0,240,192};
-			int y = dstrect->y;
-			if (y>0) y = 400-192;
-			
-			if (!settings.gapped) {
-				if (y==0) y += 8;
-				else y -= 8;
-			}
-			
-			dstrect = &(SDL_Rect){0,y,240,192};
-			
-		}
-		// menu, for now
-		else {
-			srcrect = &(SDL_Rect){48,200,400,400};
-			dstrect = &(SDL_Rect){0,0,240,400};
-		}
-	}
-	else {
-		// game
-		if (dstrect) {
-			int y = dstrect->y;
-			if (settings.gapped && y>0) {
-				y = 426 - 192;
-				dstrect = &(SDL_Rect){0,y,256,192};
-			}
-		}
-	}
-	
-	return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect);
-	// return 1;
+	return 1; // complete render takeover
 }
 
 SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
 	app.renderer = real_SDL_CreateRenderer(window, index, flags);
 	return app.renderer;
 }
+int SDL_RenderClear(SDL_Renderer* renderer) {
+	return 1; // complete render takeover
+}
 void SDL_RenderPresent(SDL_Renderer * renderer) {
 	if (preloading_game()) return;
-
-	// int ww,wh;
-	// SDL_GetWindowSize(app.window, &ww, &wh);
-	// SDL_Log("window size: %ix%i", ww,wh);
 	
-	// real_SDL_RenderCopy(renderer, app.top, NULL, &(SDL_Rect){0,0,256,192});
-	// real_SDL_RenderCopy(renderer, app.bottom, NULL, &(SDL_Rect){0,192,256,192});
+	App_render(); // complete render takeover
 	real_SDL_RenderPresent(renderer);
 }
 
@@ -975,15 +949,21 @@ static void resolve_real(void) {
 	
 	// hook SDL functions
 	real_SDL_Init = dlsym(RTLD_NEXT, "SDL_Init");
+	
 	real_SDL_CreateWindow = dlsym(RTLD_NEXT, "SDL_CreateWindow");
 	real_SDL_SetWindowSize = dlsym(RTLD_NEXT, "SDL_SetWindowSize");
+	
 	real_SDL_PollEvent = dlsym(RTLD_NEXT, "SDL_PollEvent");
-	real_SDL_RenderSetLogicalSize = dlsym(RTLD_NEXT, "SDL_RenderSetLogicalSize");
-	real_SDL_RenderCopy = dlsym(RTLD_NEXT, "SDL_RenderCopy");
+	
 	real_SDL_CreateRenderer = dlsym(RTLD_NEXT, "SDL_CreateRenderer");
-	real_SDL_DestroyTexture = dlsym(RTLD_NEXT, "SDL_DestroyTexture");
-	real_SDL_CreateTexture = dlsym(RTLD_NEXT, "SDL_CreateTexture");
+	real_SDL_RenderSetLogicalSize = dlsym(RTLD_NEXT, "SDL_RenderSetLogicalSize");
+	real_SDL_RenderClear = dlsym(RTLD_NEXT, "SDL_RenderClear");
+	real_SDL_RenderCopy = dlsym(RTLD_NEXT, "SDL_RenderCopy");
 	real_SDL_RenderPresent = dlsym(RTLD_NEXT, "SDL_RenderPresent");
+	
+	real_SDL_CreateTexture = dlsym(RTLD_NEXT, "SDL_CreateTexture");
+	real_SDL_DestroyTexture = dlsym(RTLD_NEXT, "SDL_DestroyTexture");
+	
 	real_SDL_OpenAudio = dlsym(RTLD_NEXT, "SDL_OpenAudio");
 	
 	app.base = find_exe_base();
