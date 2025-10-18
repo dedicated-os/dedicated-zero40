@@ -2,6 +2,7 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <link.h>
 #include <sys/mman.h>
 #include <setjmp.h>
@@ -20,6 +21,13 @@
 #define GAMES_PATH 		SDCARD_PATH "/games"
 #define DRASTIC_PATH 	SDCARD_PATH "/drastic"
 #define HOOK_PATH		DRASTIC_PATH "/hook"
+
+#define BAT_PATH 		"/sys/class/power_supply/axp2202-battery/"
+#define USB_PATH 		"/sys/class/power_supply/axp2202-usb/"
+#define CPU_PATH		"/sys/devices/system/cpu/cpu0/cpufreq/"
+
+#define FREQ_MENU		"408000"
+#define FREQ_GAME		"1800000"
 
 #define MAX_LINE 1024
 #define MAX_PATH 512
@@ -77,6 +85,9 @@ static struct {
 	
 	char game_path[MAX_PATH];
 	char game_name[MAX_FILE];
+	
+	int bat;
+	int usb;
 	
 	int synced;
 } app;
@@ -469,45 +480,26 @@ static int preloading_game(void) {
 
 // --------------------------------------------
 
-static int getInt(char* path) {
-	int i = 0;
-	FILE *file = fopen(path, "r");
-	if (file!=NULL) {
-		fscanf(file, "%i", &i);
-		fclose(file);
-	}
-	return i;
+static inline int getInt(int f) {
+    if (f<0) return 0;
+
+    char b[32];
+    int n = pread(f, b, sizeof(b) - 1, 0);
+    if (n<=0) return 0;
+
+    b[n] = '\0';
+    return atoi(b);
 }
-static void getFile(char* path, char* buffer, size_t buffer_size) {
-	FILE *file = fopen(path, "r");
-	if (file) {
-		fseek(file, 0L, SEEK_END);
-		size_t size = ftell(file);
-		if (size>buffer_size-1) size = buffer_size - 1;
-		rewind(file);
-		fread(buffer, sizeof(char), size, file);
-		fclose(file);
-		buffer[size] = '\0';
-	}
+static inline void putString(const char* path, const char* value) {
+	int f = open(path, O_WRONLY);
+	if (f<0) return;
+	write(f, value, strlen(value));
+	close(f);
 }
 
 // --------------------------------------------
 // custom menu
 // --------------------------------------------
-
-#define BAT_PATH "/sys/class/power_supply/axp2202-battery/"
-#define USB_PATH "/sys/class/power_supply/axp2202-usb/"
-static int App_getBattery(void) {
-	return getInt(BAT_PATH "capacity");
-}
-static int App_isCharging(void) {
-	// char *expect = "Charging";
-	// char status[32];
-	// getFile(BAT_PATH "status", status, sizeof(status));
-	// SDL_Log("App_isCharging: %s", status);
-	// return strncasecmp(expect,status,strlen(expect))==0;
-	return getInt(USB_PATH "online");
-}
 
 static void App_sync(int force) {
 	if (force) app.synced = 0;
@@ -558,15 +550,83 @@ static void App_sync(int force) {
 	
 	app.synced = 1;
 }
+static void Device_suspend(void) {
+	// real_SDL_RenderClear(app.renderer);
+	// real_SDL_RenderPresent(app.renderer);
+	
+	Settings_save();
+	
+	drastic_save_state(0);
+	drastic_await_save();
+	drastic_audio_pause(1);
+    
+	int fd = open("/sys/power/state", O_WRONLY|O_CLOEXEC);
+    if (fd >= 0) {
+        write(fd, "mem\n", 4);
+        close(fd);
+    }
+	
+	drastic_audio_pause(0);
+	Settings_setVolume(settings.volume);
+}
+static void Device_goodbye(void) {
+	real_SDL_RenderClear(app.renderer);
+	const char* lines[] = {
+		"Saving &",
+		"shutting",
+		"down...",
+	};
+	SDL_Surface* tmp;
+	SDL_Texture* texture;
+	SDL_Color white = {0xff,0xff,0xff};
+	int y = (400 - 144) / 2;
+	for (int i=0; i<3; i++) {
+		tmp = TTF_RenderUTF8_Blended(app.font, lines[i], white);
+		texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		
+		int x = (SCREEN_WIDTH - tmp->w) / 2;
+		real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x,y,tmp->w,tmp->h});
+	
+		SDL_FreeSurface(tmp);
+		SDL_DestroyTexture(texture);
+		y += 48; // line_height
+	}
+	real_SDL_RenderPresent(app.renderer);
+}
+static void Device_poweroff(void) {
+	Device_goodbye();
+	Device_goodbye(); // backbuffer too :facepalm:
+	
+	unlink("/tmp/exec_loop");
+	system("vol 0"); // mute
+	drastic_save_state(0);
+	drastic_quit();
+}
 static int Device_handleEvent(SDL_Event* event) {
 	static int menu_down = 0;
 	static int menu_combo = 0;
+	static int woken_at = 0;
+	static int power_down_at = 0;
+	
+	if (power_down_at && SDL_GetTicks()-power_down_at>=1000) {
+		Device_poweroff();
+	}
+	
 	if (event->type==SDL_KEYDOWN) {
+		if (event->key.keysym.scancode==SCAN_POWER && event->key.repeat==0) {
+			power_down_at = SDL_GetTicks();
+			return 1;
+		}
+	}
+	else if (event->type==SDL_KEYUP) {
 		if (event->key.keysym.scancode==SCAN_POWER) {
-			unlink("/tmp/exec_loop");
-			drastic_save_state(0);
-			drastic_quit();
-			return 1; // handled
+			power_down_at = 0;
+			if (SDL_GetTicks()-woken_at>250) {
+				Device_suspend();
+				woken_at = SDL_GetTicks();
+			}
+			return 1;
 		}
 	}
 	else if (event->type==SDL_JOYBUTTONDOWN) {
@@ -587,33 +647,34 @@ static int Device_handleEvent(SDL_Event* event) {
 		}
 		
 		if (event->jbutton.button==JOY_VOLUP) {
+			if (settings.volume<20) {
+				Settings_setVolume(settings.volume+1);
+			}
+			return 1;
+		}
+		else if (event->jbutton.button==JOY_VOLDN) {
+			if (settings.volume>0) {
+				Settings_setVolume(settings.volume-1);
+			}
+			return 1;
+		}
+		
+		if (event->jbutton.button==JOY_R1) {
 			if (menu_down) {
 				if (settings.brightness<10) {
 					Settings_setBrightness(settings.brightness+1);
 					menu_combo = 1;
-					return 1;
 				}
-			}
-			else {
-				if (settings.volume<20) {
-					Settings_setVolume(settings.volume+1);
-					return 1;
-				}
+				return 1;
 			}
 		}
-		else if (event->jbutton.button==JOY_VOLDN) {
+		else if (event->jbutton.button==JOY_L1) {
 			if (menu_down) {
 				if (settings.brightness>0) {
 					Settings_setBrightness(settings.brightness-1);
 					menu_combo = 1;
-					return 1;
 				}
-			}
-			else {
-				if (settings.volume>0) {
-					Settings_setVolume(settings.volume-1);
-					return 1;
-				}
+				return 1;
 			}
 		}
 	}
@@ -766,9 +827,11 @@ static  int App_capture(void) {
 	SDL_FreeSurface(tmp);
 }
 
-
 static void App_init(void) {
 	Settings_load();
+	
+	putString(CPU_PATH "scaling_governor", "userspace");
+	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
 	
 	// get games
 	DIR* dir = opendir(GAMES_PATH);
@@ -809,6 +872,9 @@ static void App_init(void) {
 	app.font = TTF_OpenFont(HOOK_PATH "/Inter_24pt-BlackItalic.ttf", 48);
 	app.mini = TTF_OpenFont(HOOK_PATH "/Inter_24pt-Black.ttf", 24);
 	app.bolt = TTF_OpenFont(HOOK_PATH "/Inter_24pt-BoldItalic.ttf", 80);
+	
+	app.bat = open(BAT_PATH "capacity", O_RDONLY);
+	app.usb = open(USB_PATH "online", O_RDONLY);
 }
 static void App_quit(void) {
 	SDL_Log("App_quit");
@@ -820,6 +886,9 @@ static void App_quit(void) {
 	
 	if (app.overlay) SDL_DestroyTexture(app.overlay);
 	if (app.button) SDL_DestroyTexture(app.button);
+	
+	close(app.bat);
+	close(app.usb);
 	
 	TTF_CloseFont(app.bolt);
 	TTF_CloseFont(app.mini);
@@ -834,8 +903,6 @@ static void App_render(void) {
 	App_sync(0);
 	real_SDL_RenderCopy(app.renderer, app.screens[0], NULL, &app.rects[0]);
 	real_SDL_RenderCopy(app.renderer, app.screens[1], NULL, &app.rects[1]);
-	
-	if (drastic_is_saving()) SDL_Log("saving...");
 }
 static  int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_lines) {
 	int line_count = 0;
@@ -996,15 +1063,22 @@ static int App_button(const char* button, const char* hint, int x, int y) {
 }
 static void App_menu(void) {
 	// drastic_audio_pause(1);
-
+	putString(CPU_PATH "scaling_setspeed", FREQ_MENU);
+	
+	static int last_battery = 0;
+	static int was_charging = 0;
+	
 	int current = app.current;
 	App_screenshot(current, 0);
 	App_screenshot(current, 1);
 	
-	static const SDL_Color gray = {0xa6,0xa6,0xa6};
-	static const SDL_Color half = {0x53,0x53,0x53};
-	static const SDL_Color white = {0xff,0xff,0xff};
-	static const SDL_Color black = {0x0,0x0,0x0};
+	static const SDL_Color gray		= {0xa6,0xa6,0xa6};
+	static const SDL_Color gold		= {0xd6,0xb2,0x63};
+	static const SDL_Color half		= {0x53,0x53,0x53};
+	static const SDL_Color white	= {0xff,0xff,0xff};
+	static const SDL_Color black	= {0x00,0x00,0x00};
+	static const SDL_Color red 		= {0xff,0x33,0x33};
+	static const SDL_Color yellow 	= {0xff,0xcc,0x00};
 	
 	SDL_Surface* tmp;
 	if (!app.overlay) {
@@ -1037,6 +1111,7 @@ static void App_menu(void) {
 		while (in_menu && real_SDL_PollEvent(&event)) {
 			LOG_event(&event);
 			
+			// TODO: shouldn't this be gated by event.type==SDL_JOYBUTTONDOWN?
 			if (event.jbutton.button==JOY_L2 || event.jbutton.button==JOY_R2) dirty = 1;
 			
 			if (Device_handleEvent(&event)) continue;
@@ -1104,6 +1179,18 @@ static void App_menu(void) {
 			}
 		}
 		
+		int is_charging = getInt(app.usb);
+		if (is_charging!=was_charging) {
+			was_charging = is_charging;
+			dirty = 1;
+		}
+		
+		int battery = getInt(app.bat);
+		if (battery!=last_battery) {
+			last_battery = battery;
+			dirty = 1;
+		}
+		
 		// let the hook position them (for now)
 		if (dirty) {
 			dirty = 0;
@@ -1164,12 +1251,14 @@ static void App_menu(void) {
 			x = 405;
 			y = 5;
 			// SDL_SetRenderDrawColor(app.renderer, 0xa6,0xa6,0xa6,0xff);
-			SDL_SetRenderDrawColor(app.renderer, 0xff,0xff,0xff,0xff);
+			if (battery<=10) SDL_SetRenderDrawColor(app.renderer, red.r,red.g,red.b,0xff); // red
+			else if (battery<=20) SDL_SetRenderDrawColor(app.renderer, yellow.r,yellow.g,yellow.b,0xff); // yellow
+			else SDL_SetRenderDrawColor(app.renderer, white.r,white.g,white.b,0xff); // white
 			SDL_RenderFillRect(app.renderer, &(SDL_Rect){x,y,68,32});
 			SDL_RenderFillRect(app.renderer, &(SDL_Rect){x+68,y+8,4,16});
 			
 			// corners
-			SDL_SetRenderDrawColor(app.renderer, 0x0,0x0,0x0,0x80);
+			SDL_SetRenderDrawColor(app.renderer, black.r,black.g,black.b,0x80);
 			const SDL_Point points[6] = {
 				{x,y},
 				{x+67,y},
@@ -1179,11 +1268,10 @@ static void App_menu(void) {
 				{x+71,y+23},
 			};
 			SDL_RenderDrawPoints(app.renderer, points, 6);
-
-			int i = App_getBattery();
+			
 			char bat[8];
-			if (i==100) strcpy(bat, "FULL");
-			else sprintf(bat, "%i%%", i);
+			if (battery==100) strcpy(bat, "FULL");
+			else sprintf(bat, "%i%%", battery);
 			tmp = TTF_RenderUTF8_Blended(app.mini, bat, black);
 			SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
 			SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
@@ -1192,8 +1280,13 @@ static void App_menu(void) {
 			SDL_FreeSurface(tmp);
 			SDL_DestroyTexture(texture);
 			
-			if (App_isCharging()) {
-				tmp = TTF_RenderUTF8_Blended(app.bolt, FAUX_BOLT, white);
+			if (is_charging) {
+				SDL_Color color;
+				if (battery<=10) color = red;
+				else if (battery<=20) color = yellow;
+				else color = white;
+			
+				tmp = TTF_RenderUTF8_Blended(app.bolt, FAUX_BOLT, color);
 				SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
 				SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
 				real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x-tmp->w+6,y-6,tmp->w,tmp->h});
@@ -1213,6 +1306,7 @@ static void App_menu(void) {
 		}
 	}
 	
+	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
 	// drastic_audio_pause(0);
 }
 

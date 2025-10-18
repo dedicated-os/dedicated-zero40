@@ -1,5 +1,10 @@
-- true sleep
-- poweroff on long press
+- mark menu as dirty when waking from sleep?
+	maybe just if (Device_handleEvent()) dirty = 1;?
+
+
+BUGS
+- sometimes audio doesn't return after sleep?
+- I think audio/performance is worse after wake?
 
 -----------------------------------------------
 
