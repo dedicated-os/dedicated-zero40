@@ -16,6 +16,9 @@
 
 // --------------------------------------------
 
+#define CEIL_TO(x, n) (((x) + (n) - 1) / (n) * (n))
+#define NUMBER_OF(items) (sizeof(items) / sizeof((items)[0]))
+
 
 #define SDCARD_PATH		"/mnt/SDCARD"
 #define GAMES_PATH 		SDCARD_PATH "/games"
@@ -39,6 +42,18 @@
 
 #define FAUX_BOLT "͛"
 #define BUTTON_BG "⬤"
+
+#define BLACK_TRIAD 	0x00,0x00,0x00
+#define WHITE_TRIAD 	0xff,0xff,0xff
+#define RED_TRIAD		0xff,0x33,0x33
+#define GREEN_TRIAD		0x33,0xcc,0x33
+#define YELLOW_TRIAD	0xff,0xcc,0x00
+
+#define BLACK_COLOR (SDL_Color){BLACK_TRIAD}
+#define WHITE_COLOR (SDL_Color){WHITE_TRIAD}
+#define RED_COLOR (SDL_Color){RED_TRIAD}
+#define GREEN_COLOR (SDL_Color){GREEN_TRIAD}
+#define YELLOW_COLOR (SDL_Color){YELLOW_TRIAD}
 
 // --------------------------------------------
 
@@ -580,10 +595,9 @@ static void Device_goodbye(void) {
 	};
 	SDL_Surface* tmp;
 	SDL_Texture* texture;
-	SDL_Color white = {0xff,0xff,0xff};
 	int y = (400 - 144) / 2;
 	for (int i=0; i<3; i++) {
-		tmp = TTF_RenderUTF8_Blended(app.font, lines[i], white);
+		tmp = TTF_RenderUTF8_Blended(app.font, lines[i], WHITE_COLOR);
 		texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
 		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
 		
@@ -758,7 +772,7 @@ static void App_screenshot(int current, int screen) {
 	if (dot && dot!=game_name) *dot = '\0';
 	
 	char path[MAX_PATH];
-	sprintf(path, HOOK_PATH "/screenshots/%s-%i.bmp", game_name, screen);
+	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
 	SDL_Log("screenshot: %s", path);
 	
 	void *pixels = NULL;
@@ -788,7 +802,7 @@ static void App_preview(int current, int screen) {
 	if (dot && dot!=game_name) *dot = '\0';
 	
 	char path[MAX_PATH];
-	sprintf(path, HOOK_PATH "/screenshots/%s-%i.bmp", game_name, screen);
+	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
 	if (access(path, F_OK)!=0) sprintf(path, HOOK_PATH "/screenshot-%i.png", screen);
 
 	SDL_Log("preview: %s", path);
@@ -891,6 +905,7 @@ static void App_quit(void) {
 }
 static void App_render(void) {
 	if (!app.renderer || !app.screens[0] || !app.screens[1]) return;
+	SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
 	real_SDL_RenderClear(app.renderer);
 	App_sync(0);
 	real_SDL_RenderCopy(app.renderer, app.screens[0], NULL, &app.rects[0]);
@@ -904,14 +919,6 @@ static  int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_li
 	char* p = text;
 	int line_width = 0;
 	
-	int color = 0;
-	SDL_Color colors[] = {
-		{0xff,0xff,0xff}, // white
-		{0xd6,0xb2,0x63}, // gold
-		{0x99,0x99,0x99}, // gray
-	};
-	size_t MAX_COLORS = sizeof(colors) / sizeof(colors[0]);
-
 	while (*p) {
 		char* start = p;
 	
@@ -924,7 +931,7 @@ static  int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_li
 		// wrap on hyphen
 		if (strcmp(word, "-") == 0) {
 			if (strlen(line) > 0 && line_count < max_lines) {
-				lines[line_count++] = TTF_RenderUTF8_Blended(font, line, colors[color]);
+				lines[line_count++] = TTF_RenderUTF8_Blended(font, line, WHITE_COLOR);
 				line[0] = '\0';
 				
 				// color += 1;
@@ -941,13 +948,13 @@ static  int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_li
 	
 		TTF_SizeUTF8(font, test_line, &line_width, NULL);
 		
-		int ow = line_count==0 ? 104 : 0;
+		int ow = line_count==0 ? 96 : 0;
 		if (line_width<SCREEN_WIDTH-ow) {
 			strcpy(line, test_line);
 		}
 		else {
 			if (line_count<max_lines) {
-				SDL_Surface* txt = TTF_RenderUTF8_Blended(font, line, colors[color]);
+				SDL_Surface* txt = TTF_RenderUTF8_Blended(font, line, WHITE_COLOR);
 				lines[line_count++] = txt;
 			}
 			else {
@@ -963,7 +970,7 @@ static  int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_li
 
 	// add trailing line
 	if (strlen(line)>0 && line_count<max_lines) {
-		SDL_Surface* txt = TTF_RenderUTF8_Blended(font, line, colors[color]);
+		SDL_Surface* txt = TTF_RenderUTF8_Blended(font, line, WHITE_COLOR);
 		lines[line_count++] = txt;
 	}
 	return line_count;
@@ -973,9 +980,6 @@ static int App_button(const char* button, const char* hint, int x, int y) {
 	SDL_QueryTexture(app.button, NULL, NULL, &bw, &bh);
 	SDL_Surface* tmp;
 	SDL_Texture* texture;
-	
-	static const SDL_Color white = {0xff,0xff,0xff};
-	static const SDL_Color black = {0x0,0x0,0x0};
 	
 	if (x<0) {
 		x += SCREEN_WIDTH;
@@ -1000,7 +1004,7 @@ static int App_button(const char* button, const char* hint, int x, int y) {
 		y += 2;
 		
 		// button name
-		tmp = TTF_RenderUTF8_Blended(app.mini, button, black);
+		tmp = TTF_RenderUTF8_Blended(app.mini, button, BLACK_COLOR);
 		texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
 		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
 	
@@ -1012,7 +1016,7 @@ static int App_button(const char* button, const char* hint, int x, int y) {
 	}
 	else {
 		// button name
-		tmp = TTF_RenderUTF8_Blended(app.mini, button, black);
+		tmp = TTF_RenderUTF8_Blended(app.mini, button, BLACK_COLOR);
 		texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
 		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
 		
@@ -1040,7 +1044,7 @@ static int App_button(const char* button, const char* hint, int x, int y) {
 	x += 6;
 	
 	// hint
-	tmp = TTF_RenderUTF8_Blended(app.mini, hint, white);
+	tmp = TTF_RenderUTF8_Blended(app.mini, hint, WHITE_COLOR);
 	texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
 	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
 	
@@ -1063,14 +1067,6 @@ static void App_menu(void) {
 	App_screenshot(current, 0);
 	App_screenshot(current, 1);
 	
-	static const SDL_Color gray		= {0xa6,0xa6,0xa6};
-	static const SDL_Color gold		= {0xd6,0xb2,0x63};
-	static const SDL_Color half		= {0x53,0x53,0x53};
-	static const SDL_Color white	= {0xff,0xff,0xff};
-	static const SDL_Color black	= {0x00,0x00,0x00};
-	static const SDL_Color red 		= {0xff,0x33,0x33};
-	static const SDL_Color yellow 	= {0xff,0xcc,0x00};
-	
 	SDL_Surface* tmp;
 	if (!app.overlay) {
 		int w = 1; // we can just stretch horizontally on the GPU
@@ -1080,15 +1076,18 @@ static void App_menu(void) {
 		uint32_t* d = tmp->pixels;
 		int total = w * h;
 		for (int i=0; i<total; i++,d++) {
-			*d = ((total - i) * 224 / total) << 24;
+			// *d = ((total - i) * 224 / total) << 24; // 87.5% to 0%
+			*d = (64 + ((total - i) * 160 / total)) << 24; // 87.5% to 25%
 		}
 
 		app.overlay = SDL_CreateTextureFromSurface(app.renderer, tmp);
 		SDL_SetTextureBlendMode(app.overlay, SDL_BLENDMODE_BLEND);
 		SDL_FreeSurface(tmp);
 	}
+	
+	// TODO: remove
 	if (!app.button) {
-		tmp = TTF_RenderUTF8_Blended(app.mini, BUTTON_BG, white);
+		tmp = TTF_RenderUTF8_Blended(app.mini, BUTTON_BG, WHITE_COLOR);
 		app.button = SDL_CreateTextureFromSurface(app.renderer, tmp);
 		SDL_SetTextureBlendMode(app.button, SDL_BLENDMODE_BLEND);
 		SDL_FreeSurface(tmp);
@@ -1192,6 +1191,78 @@ static void App_menu(void) {
 			App_render();
 			real_SDL_RenderCopy(app.renderer, app.overlay, NULL, NULL);
 			
+			int x,y,w,h;
+			
+			// battery
+			// battery = 100;
+			if (battery<=10) SDL_SetRenderDrawColor(app.renderer, RED_TRIAD,0xff);
+			else if (battery<=20) SDL_SetRenderDrawColor(app.renderer, YELLOW_TRIAD,0xff);
+			else if (battery>=100) SDL_SetRenderDrawColor(app.renderer, GREEN_TRIAD,0xff);
+			else SDL_SetRenderDrawColor(app.renderer, WHITE_TRIAD,0xff);
+
+			x = 414;
+			y = 5;
+			
+			w = CEIL_TO(battery,20) * 40 / 100;
+			
+			const SDL_Rect rects[] = {
+				// body
+				{x+ 0,y+ 1, 1,30},
+				{x+ 1,y+ 0, 3,32},
+				{x+ 4,y+ 0,50, 4},
+				{x+ 4,y+28,50, 4},
+				{x+54,y+ 0, 3,32},
+				{x+57,y+ 1, 1,30},
+				// cap
+				{x+58,y+ 8, 3,16},
+				{x+61,y+ 9, 1,14},
+				// fill
+				{x+  8,y+ 9, 1,14},
+				{x+  9,y+ 8, w,16},
+				{x+w+9,y+ 9, 1,14},
+			};
+			
+			SDL_RenderFillRects(app.renderer, rects, NUMBER_OF(rects));
+			
+			// corners
+			SDL_SetRenderDrawColor(app.renderer, WHITE_TRIAD,0x80);
+			const SDL_Point points[] = {
+				// outer
+				{x+ 0,y+ 0},
+				{x+57,y+ 0},
+				{x+ 0,y+31},
+				{x+57,y+31},
+				// cap
+				{x+61,y+ 8},
+				{x+61,y+23},
+				// inner
+				{x+ 4,y+ 4},
+				{x+53,y+ 4},
+				{x+ 4,y+27},
+				{x+53,y+27},
+				// fill
+				{x+  8,y+ 8},
+				{x+w+9,y+ 8},
+				{x+  8,y+23},
+				{x+w+9,y+23},
+			};
+			SDL_RenderDrawPoints(app.renderer, points, NUMBER_OF(points));
+			
+			if (is_charging) {
+				SDL_Color color;
+				if (battery<=10) color = RED_COLOR;
+				else if (battery<=20) color = YELLOW_COLOR;
+				else if (battery>=100) color = GREEN_COLOR;
+				else color = WHITE_COLOR;
+			
+				tmp = TTF_RenderUTF8_Blended(app.bolt, FAUX_BOLT, color);
+				SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
+				SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+				real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x-tmp->w+6,y-6,tmp->w,tmp->h});
+				SDL_FreeSurface(tmp);
+				SDL_DestroyTexture(texture);
+			}
+			
 			// game name
 			char name[MAX_FILE];
 			App_getDisplayName(app.items[current], name);
@@ -1201,9 +1272,9 @@ static void App_menu(void) {
 			int line_count = App_wrap(app.font, name, lines, MAX_LINES);
 			
 			int line_height = 48;
-			int h = line_count * line_height;
-			int x = 0;
-			int y = -10;
+			h = line_count * line_height;
+			x = 0;
+			y = -10;
 			for (int i=0; i<line_count; i++) {
 				SDL_Surface* line = lines[i];
 				SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, line);
@@ -1217,10 +1288,6 @@ static void App_menu(void) {
 			
 			// hints
 			y += 12;
-
-			// y = SCREEN_HEIGHT - 36;
-			// SDL_SetRenderDrawColor(app.renderer, 0x0,0x0,0x0,0x80);
-			// SDL_RenderFillRect(app.renderer, &(SDL_Rect){0,y-3,SCREEN_WIDTH,36+3});
 			
 			if (current==app.current) {
 				x += App_button("Y","Save", x,y);
@@ -1238,53 +1305,6 @@ static void App_menu(void) {
 				x += App_button("A","Play", x,y);
 			}
 			
-			// battery
-			x = 405;
-			y = 5;
-			// SDL_SetRenderDrawColor(app.renderer, 0xa6,0xa6,0xa6,0xff);
-			if (battery<=10) SDL_SetRenderDrawColor(app.renderer, red.r,red.g,red.b,0xff); // red
-			else if (battery<=20) SDL_SetRenderDrawColor(app.renderer, yellow.r,yellow.g,yellow.b,0xff); // yellow
-			else SDL_SetRenderDrawColor(app.renderer, white.r,white.g,white.b,0xff); // white
-			SDL_RenderFillRect(app.renderer, &(SDL_Rect){x,y,68,32});
-			SDL_RenderFillRect(app.renderer, &(SDL_Rect){x+68,y+8,4,16});
-			
-			// corners
-			SDL_SetRenderDrawColor(app.renderer, black.r,black.g,black.b,0x80);
-			const SDL_Point points[6] = {
-				{x,y},
-				{x+67,y},
-				{x,y+31},
-				{x+67,y+31},
-				{x+71,y+8},
-				{x+71,y+23},
-			};
-			SDL_RenderDrawPoints(app.renderer, points, 6);
-			
-			char bat[8];
-			if (battery==100) strcpy(bat, "FULL");
-			else sprintf(bat, "%i%%", battery);
-			tmp = TTF_RenderUTF8_Blended(app.mini, bat, black);
-			SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
-			SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-			int w = tmp->w;
-			real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x+64-w,y+1,tmp->w,tmp->h});
-			SDL_FreeSurface(tmp);
-			SDL_DestroyTexture(texture);
-			
-			if (is_charging) {
-				SDL_Color color;
-				if (battery<=10) color = red;
-				else if (battery<=20) color = yellow;
-				else color = white;
-			
-				tmp = TTF_RenderUTF8_Blended(app.bolt, FAUX_BOLT, color);
-				SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
-				SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-				real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x-tmp->w+6,y-6,tmp->w,tmp->h});
-				SDL_FreeSurface(tmp);
-				SDL_DestroyTexture(texture);
-			}
-			
 			// flip
 			real_SDL_RenderPresent(app.renderer);
 			
@@ -1292,8 +1312,9 @@ static void App_menu(void) {
 				App_capture();
 				capture = 0;
 			}
-			
-			SDL_Delay(16); 
+		}
+		else {
+			SDL_Delay(16);
 		}
 	}
 	

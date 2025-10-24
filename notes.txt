@@ -1,9 +1,13 @@
 - add htop and taskset to tina image
 - pin hot thread to a specific core?
-- mark menu as dirty when waking from sleep?
-	maybe just if (Device_handleEvent()) dirty = 1;?
+- revert to faux sleep? mem sleep is kinda buggy
 
 BUGS
+- sometimes doesn't respond to input after sleep?
+	but it's not hung, I can kill drastic from shell
+	I wonder if the audio thread is hung/paused?
+	or is it a timing thing in drastic itself?
+	can't reproduce...
 - sometimes audio doesn't return after sleep?
 - I think audio/performance is worse after wake?
 
