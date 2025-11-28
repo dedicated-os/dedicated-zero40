@@ -215,6 +215,8 @@ static int (*real__snprintf_chk)(char *s, size_t maxlen, int flag, size_t slen, 
 static void (*real_exit)(int) __attribute__((noreturn)) = NULL;
 static void (*real__exit)(int) __attribute__((noreturn)) = NULL;
 static int (*real_system)(const char *) = NULL;
+static int (*real_puts)(const char *__s) = NULL;
+static int (*real__printf_chk)(int flag, const char *fmt, ...) = NULL;
 
 // --------------------------------------------
 // TODO: tmp? SDL2 compat
@@ -387,6 +389,10 @@ typedef uint8_t (*drastic_audio_pause_t)(void *);
 typedef void (*drastic_audio_unpause_t)(void *);
 typedef void (*drastic_audio_revert_t)(void *);
 
+static int tmp_awaiting_load = 1;
+static int tmp_just_loaded = 0;
+static int tmp_load_started = 0;
+
 static inline void* drastic_var_system(void) {
 	return PTR_AT(app.base + 0x15ff30); // follow arg in Cutter
 }
@@ -421,6 +427,10 @@ static void drastic_load_nds_and_jump(const char* path) {
 
 	drastic_load_nds_t d_load_nds = GET_PFN(app.base + 0x0006fd30); // nm ./drastic | grep load_nds
 	drastic_reset_system_t d_reset_system = GET_PFN(app.base + 0x0000fd50); // nm ./drastic | grep reset_system
+	
+	tmp_awaiting_load = 1;
+	tmp_load_started = 0;
+	tmp_just_loaded = 0;
 	
 	void* sys = drastic_var_system();
 	d_load_nds((uint8_t *)sys + 800, path);
@@ -462,10 +472,12 @@ static void drastic_quit(void) {
 // support
 // --------------------------------------------
 
+// TODO: reimplment with log hooks
 // this is required to handle timing issues with drastic
 // I wonder if the timing varies with rom size...yes
-#define LOAD_DEFER 35 // was 30
-#define RESUME_DEFER 15 // was 10
+// these are in frames/ticks?
+#define LOAD_DEFER 50 // was 35
+#define RESUME_DEFER 25 // was 15
 static struct {
 	int loaded;
 	int defer;
@@ -474,17 +486,20 @@ static struct {
 } preloader = {1,LOAD_DEFER,1,0};
 
 static int preload_game(void) {
+	// puts("\tpreload_game"); fflush(stdout);
 	drastic_audio_pause(0);
 	preloader.loaded = 0;
 	preloader.defer = 0; // only need to defer on boot, not when switching
 	preloader.resume = 0;
 }
 static int preloading_game(void) {
+	// puts("\tpreloading_game"); fflush(stdout);
 	if (!preloader.loaded && !preloader.defer) {
 		preloader.loaded = 1;
 		preloader.resume = !preloader.reset;
 		preloader.reset = 0;
 		preloader.defer = preloader.resume ? RESUME_DEFER : 0;
+		// puts("\tbefore drastic_load_nds_and_jump"); fflush(stdout);
 		drastic_load_nds_and_jump(app.game_path);
 		return 1; // never returns because the above jumps
 	}
@@ -496,6 +511,7 @@ static int preloading_game(void) {
 	
 	if (preloader.resume) {
 		preloader.resume = 0;
+		// puts("\tbefore drastic_load_state"); fflush(stdout);
 		drastic_load_state(0);
 	}
 	
@@ -1626,6 +1642,14 @@ int SDL_RenderClear(SDL_Renderer* renderer) {
 	return 1; // complete render takeover
 }
 void SDL_RenderPresent(SDL_Renderer * renderer) {
+	if (tmp_awaiting_load && tmp_just_loaded) {
+		tmp_awaiting_load = 0;
+		tmp_just_loaded = 0;
+		puts("just loaded!"); fflush(stdout);
+		preloader.defer = 0; // no need to wait any longer
+	}
+	
+	// puts("SDL_RenderPresent"); fflush(stdout);
 	if (!tmp_in_drastic_menu) {
 		if (preloading_game()) return;
 		App_render(); // complete render takeover
@@ -1673,16 +1697,52 @@ void SDL_Delay(uint32_t ms) {
 // hijack main to modify args
 // --------------------------------------------
 
-#define DISABLE_LOGGING
+// #define DISABLE_LOGGING
 
-#ifdef DISABLE_LOGGING
 int __printf_chk(int flag, const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+
+	if (strncmp(fmt, "vf ticks", 8)==0 || strncmp(fmt, "ticks_delta", 11)==0) { // silence spam
+		va_end(ap);
+		return 0;
+	}
+
+	if (tmp_awaiting_load && strncmp(fmt, "Gamecard title", 14)==0) {
+		puts("detected rom loading...");
+		tmp_load_started = 1;
+	}
+	
+	if (tmp_load_started && strncmp(fmt, "Remapping DTCM", 14)==0) {
+		puts("detected rom ready!");
+		tmp_just_loaded = 1;
+		tmp_load_started = 0;
+	}
+	
+#ifdef DISABLE_LOGGING
+	va_end(ap);
 	return 0;
-}
-int puts (const char *__s) {
-	return 0;
-}
 #endif
+	
+	char tick_fmt[1024];
+	snprintf(tick_fmt, sizeof tick_fmt, "[%i] %s", SDL_GetTicks(), fmt);
+
+	int r = __vprintf_chk(flag, tick_fmt, ap);
+	va_end(ap);
+	return r;
+
+	return 0;
+}
+int puts (const char *msg) {
+#ifdef DISABLE_LOGGING
+	return 0;
+#endif
+
+	char tick_msg[1024];
+	snprintf(tick_msg, sizeof tick_msg, "[%i] %s", SDL_GetTicks(), msg);
+	return real_puts(tick_msg);
+}
+
 
 __attribute__((noreturn))
 void exit(int status) {
@@ -1750,6 +1810,8 @@ static void resolve_real(void) {
 	real_exit  = dlsym(RTLD_NEXT, "exit");
 	real__exit = dlsym(RTLD_NEXT, "_exit");
 	real_system = dlsym(RTLD_NEXT, "system");
+	real_puts = dlsym(RTLD_NEXT, "puts");
+	real__printf_chk = dlsym(RTLD_NEXT, "__printf_chk");
 	
 	// hook SDL functions
 	real_SDL_Init = dlsym(RTLD_NEXT, "SDL_Init");
