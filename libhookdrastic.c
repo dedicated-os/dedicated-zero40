@@ -120,10 +120,10 @@ static struct {
 static int osd_at;
 
 // --------------------------------------------
-// tmp?
+// raw HMI controls
 // --------------------------------------------
 
-static int raw_vol(int value) {
+static void raw_vol(int value) {
 	char* card_name = "hw:0";
 	char* elem_name = "DAC volume";
 	char* mute_name = "HpSpeaker";
@@ -134,7 +134,6 @@ static int raw_vol(int value) {
 	snd_mixer_selem_register(mixer, NULL, NULL);
 	snd_mixer_load(mixer);
 
-	// volume
 	snd_mixer_selem_id_t *sid = NULL;
 	snd_mixer_selem_id_alloca(&sid);
 	snd_mixer_selem_id_set_index(sid, 0);
@@ -142,17 +141,7 @@ static int raw_vol(int value) {
 	snd_mixer_elem_t *elem = snd_mixer_find_selem(mixer, sid);
 	snd_mixer_selem_set_playback_volume_all(elem, value);
 
-	// TODO: this resets speaker/headphone state (and pops)
-	// mute/unmute
-	// snd_mixer_selem_id_t *mid = NULL;
-	// snd_mixer_selem_id_alloca(&mid);
-	// snd_mixer_selem_id_set_index(mid, 0);
-	// snd_mixer_selem_id_set_name(mid, mute_name);
-	// snd_mixer_elem_t *mute = snd_mixer_find_selem(mixer,mid);
-	// snd_mixer_selem_set_playback_switch_all(mute, value ? 1 : 0);
-
 	snd_mixer_close(mixer);
-	return 0;
 }
 
 #define DISP_LCD_SET_BRIGHTNESS 0x102
@@ -162,6 +151,25 @@ static void raw_bri(int value) {
 
 	unsigned long param[4]={0,value,0,0};
 	ioctl(fd, DISP_LCD_SET_BRIGHTNESS, &param);
+	close(fd);
+}
+
+#define LED_ADDR ((uintptr_t)0x0300B034)
+#define LED_ON	0xC0
+#define LED_OFF 0xC4
+static void raw_led(int enable) {
+	int fd = open("/dev/mem", O_RDWR | O_SYNC);
+	if (fd<0) return;
+	
+	size_t page_size = getpagesize();
+	off_t base = (off_t)(LED_ADDR & ~(page_size - 1));
+
+	uint8_t *map = mmap(NULL, page_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, base);
+	if (map!=MAP_FAILED) {
+		volatile uint32_t *reg = (uint32_t *)(map + (LED_ADDR - base));
+		*reg = enable ? LED_ON : LED_OFF;
+		munmap(map, page_size);
+	}
 	close(fd);
 }
 
@@ -733,8 +741,7 @@ static void App_reset(void) {
 }
 
 static void Device_setLED(int enable) {
-	if (enable) system("pp 0x0300B034 0xC0");
-	else system("pp 0x0300B034 0xC4");
+	raw_led(enable);
 }
 static void Device_mute(int mute) {
 	if (mute) raw_vol(0);
@@ -756,11 +763,8 @@ static void Device_suspend(void) {
 	Settings_setVolume(settings.volume);
 }
 static void Device_sleep(void) {
-	// real_SDL_RenderClear(app.renderer);
-	// real_SDL_RenderPresent(app.renderer);
-	
-	system("bl 0");
-	system("vol 0");
+	raw_bri(0);
+	raw_vol(0);
 	putInt("/sys/class/graphics/fb0/blank", 4);
 	Device_setLED(1);
 	
@@ -833,7 +837,7 @@ static void Device_poweroff(void) {
 	Device_goodbye();
 	Device_goodbye(); // backbuffer too :facepalm:
 	
-	system("vol 0"); // mute
+	raw_vol(0);
 	App_save();
 	unlink("/tmp/exec_loop");
 	Device_setLED(1);
