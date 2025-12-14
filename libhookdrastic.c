@@ -893,17 +893,17 @@ static int Device_handleEvent(SDL_Event* event) {
 		if (event->jbutton.button==JOY_PLUS) {
 			if (settings.volume<20) {
 				Settings_setVolume(settings.volume+1);
-				app.osd = OSD_VOLUME;
-				osd_at = SDL_GetTicks();
 			}
+			app.osd = OSD_VOLUME;
+			osd_at = SDL_GetTicks();
 			return 1;
 		}
 		else if (event->jbutton.button==JOY_MINUS) {
 			if (settings.volume>0) {
 				Settings_setVolume(settings.volume-1);
-				app.osd = OSD_VOLUME;
-				osd_at = SDL_GetTicks();
 			}
+			app.osd = OSD_VOLUME;
+			osd_at = SDL_GetTicks();
 			return 1;
 		}
 		
@@ -912,9 +912,9 @@ static int Device_handleEvent(SDL_Event* event) {
 				if (settings.brightness<10) {
 					Settings_setBrightness(settings.brightness+1);
 					menu_combo = 1;
-					app.osd = OSD_BRIGHTNESS;
-					osd_at = SDL_GetTicks();
 				}
+				app.osd = OSD_BRIGHTNESS;
+				osd_at = SDL_GetTicks();
 				return 1;
 			}
 		}
@@ -923,9 +923,9 @@ static int Device_handleEvent(SDL_Event* event) {
 				if (settings.brightness>0) {
 					Settings_setBrightness(settings.brightness-1);
 					menu_combo = 1;
-					app.osd = OSD_BRIGHTNESS;
-					osd_at = SDL_GetTicks();
 				}
+				app.osd = OSD_BRIGHTNESS;
+				osd_at = SDL_GetTicks();
 				return 1;
 			}
 		}
@@ -1365,7 +1365,8 @@ static void App_OSD(char* label, int value, int max) {
 	w = 8 + w + 8 + 236 + 8;
 	h = 8 + 28 + 8;
 	x = (SCREEN_WIDTH - w) / 2;
-	y = ((SCREEN_HEIGHT/2) - h) * 3 / 4;
+	SDL_Rect* rect = &app.rects[0];
+	y = rect->y + rect->h - h - 16;
 	
 	AA_rect(x,y,w,h, 0, TRIAD_ALPHA(BLACK_TRIAD,0x60));
 
@@ -1401,11 +1402,7 @@ static void App_OSD(char* label, int value, int max) {
 static void App_menu(void) {
 	SDL_Log("enter menu");
 
-
-
-	// SDL_PauseAudio(1);
 	Device_mute(1);
-
 
 	app.menu = 1;
 	putString(CPU_PATH "scaling_setspeed", FREQ_MENU);
