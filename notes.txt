@@ -18,6 +18,11 @@ BUGS
 
 -----------------------------------------------
 
+drastic (17550db727f3b59d36b57746ad1944be) from: 
+	https://github.com/ROCKNIX/packages/blob/main/drastic.tar.gz
+
+-----------------------------------------------
+
 Look up program function (eg. Drastic's quit)
 
 	nm ./drastic | grep quit
