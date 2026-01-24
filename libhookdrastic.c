@@ -1574,10 +1574,12 @@ static void App_menu(void) {
 			char* save_items[] = {
 				"SAVE",
 				"LOAD",
+				// "LIBRARY",
 				"RESET",
 			};
 			char* load_items[] = {
 				"LOAD",
+				// "LIBRARY",
 			};
 			
 			char** items;
@@ -1593,7 +1595,6 @@ static void App_menu(void) {
 			
 			if (selected<0) selected += count;
 			selected %= count;
-			
 			
 			int snap = selected==2 ? SNAP_RESET : (current==app.current && selected==0 ? SNAP_CURRENT : SNAP_SAVE);
 			App_preview(current,0, snap);
@@ -1654,6 +1655,13 @@ static void App_menu(void) {
 			// y = 0;
 			// h = SCREEN_HEIGHT;
 			
+			// int mw = 0;
+			// for (int i=0; i<count; i++) {
+			// 	TTF_SizeUTF8(app.mini, items[i], &w, NULL);
+			// 	if (w>mw) mw = w;
+			// }
+			// w = mw;
+
 			TTF_SizeUTF8(app.mini, "RESET", &w, NULL);
 			w = 8 + w + 8;
 			x = (SCREEN_WIDTH - w) / 2;

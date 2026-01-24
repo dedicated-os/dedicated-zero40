@@ -1,3 +1,8 @@
+- update lichee patch for new boot-resource size
+	device/config/chips/a133/configs/aw3/linux/sys_partition.fex
+
+- implement new dedicated fonts
+
 - cleanup toolchain makefile
 
 - figure out what can be reused with libhookppsspp on smart pro (non-s)
