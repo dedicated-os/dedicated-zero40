@@ -686,7 +686,7 @@ typedef struct {
 
 Font* font36 = &(Font){
 	.name = "font-dedicated-36.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",//"  abcdefghijklmnopqrstuvwxyz",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",
 	.tile_width = 36,
 	.tile_height = 36,
 	.offset_x = -2,
@@ -703,11 +703,6 @@ Font* font36 = &(Font){
 		[' '] = 18,
 		['/'] = 36,
 		['&'] = 36,
-		// ['i'] = 6,
-		// ['l'] = 6,
-		// ['j'] = 12,
-		// ['m'] = 30,
-		// ['w'] = 30,
 	},
 	.kern_pairs = {
 		['A']['T'] = -6,
@@ -718,7 +713,6 @@ Font* font36 = &(Font){
 		['Y']['A'] = -6,
 		['T']['-'] = -6,
 		['-']['T'] = -6,
-		// [ 0 ]['j'] = -6, // catch-all
 	},
 };
 
