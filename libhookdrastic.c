@@ -13,7 +13,6 @@
 #include <stdlib.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
-#include <SDL2/SDL_ttf.h>
 #include <alsa/asoundlib.h>
 
 // --------------------------------------------
@@ -44,12 +43,14 @@
 
 #define BLACK_TRIAD 	0x00,0x00,0x00
 #define WHITE_TRIAD 	0xff,0xff,0xff
+#define LIGHT_TRIAD 	0xc1,0xc1,0xc1
 #define RED_TRIAD		0xff,0x33,0x33
 #define GREEN_TRIAD		0x33,0xcc,0x33
 #define YELLOW_TRIAD	0xff,0xcc,0x00
 
 #define BLACK_COLOR (SDL_Color){BLACK_TRIAD,0xff}
 #define WHITE_COLOR (SDL_Color){WHITE_TRIAD,0xff}
+#define LIGHT_COLOR (SDL_Color){LIGHT_TRIAD,0xff}
 #define RED_COLOR (SDL_Color){RED_TRIAD,0xff}
 #define GREEN_COLOR (SDL_Color){GREEN_TRIAD,0xff}
 #define YELLOW_COLOR (SDL_Color){YELLOW_TRIAD,0xff}
@@ -97,8 +98,6 @@ static struct {
 	SDL_Texture* preview[SCREEN_COUNT];
 	SDL_Texture* overlay;
 	SDL_Rect rects[SCREEN_COUNT];
-	TTF_Font* font;
-	TTF_Font* mini;
 	
 	int count;
 	int current;
@@ -460,7 +459,6 @@ static struct {
 	int after;
 } loader = {LOADER_AWAITING,LOADER_RESUME};
 
-
 // --------------------------------------------
 // drastic shims
 // --------------------------------------------
@@ -662,6 +660,254 @@ static int Repeater_pollEvent(SDL_Event* event) {
 }
 
 // --------------------------------------------
+// custom fonts
+// --------------------------------------------
+
+typedef struct {
+	uint8_t map[128];
+	uint8_t char_widths[128];
+	int8_t kern_pairs[128][128];
+
+	SDL_Surface* bitmap;
+	const char* name;
+	const char* charset;
+	int8_t offset_x;
+	int8_t offset_y;
+	int8_t tracking;
+	uint8_t tile_width;
+	uint8_t tile_height;
+	uint8_t tiles_wide;
+	uint8_t tiles_high;
+	uint8_t missing;
+
+	uint8_t char_width;
+	uint8_t low_width;
+} Font;
+
+Font* font36 = &(Font){
+	.name = "font-dedicated-36.png",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",//"  abcdefghijklmnopqrstuvwxyz",
+	.tile_width = 36,
+	.tile_height = 36,
+	.offset_x = -2,
+	.tracking = 6,
+	.char_width = 30,
+	.low_width = 24,
+	.char_widths = {
+		['I'] = 6,
+		['1'] = 18,
+		['.'] = 6,
+		['-'] = 24,
+		['\''] = 6,
+		['!'] = 6,
+		[' '] = 18,
+		['/'] = 36,
+		['&'] = 36,
+		// ['i'] = 6,
+		// ['l'] = 6,
+		// ['j'] = 12,
+		// ['m'] = 30,
+		// ['w'] = 30,
+	},
+	.kern_pairs = {
+		['A']['T'] = -6,
+		['T']['A'] = -6,
+		['A']['V'] = -6,
+		['V']['A'] = -6,
+		['A']['Y'] = -6,
+		['Y']['A'] = -6,
+		['T']['-'] = -6,
+		['-']['T'] = -6,
+		// [ 0 ]['j'] = -6, // catch-all
+	},
+};
+
+Font* font24 = &(Font){
+	.name = "font-dedicated-24.png",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",
+	.tile_width = 24,
+	.tile_height = 24,
+	.offset_x = -1,
+	.tracking = 4,
+	.char_width = 20,
+	.char_widths = {
+		['I'] = 4,
+		['1'] = 12,
+		['.'] = 4,
+		['-'] = 16,
+		['\''] = 4,
+		['!'] = 4,
+		[' '] = 12,
+		['/'] = 24,
+	},
+	.kern_pairs = {
+		['A']['T'] = -4,
+		['T']['A'] = -4,
+		['A']['V'] = -4,
+		['V']['A'] = -4,
+		['T']['-'] = -4,
+		['-']['T'] = -4,
+	},
+};
+
+Font* font16 = &(Font){
+	.name = "font-dedicated-16.png",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",
+	.tile_width = 16,
+	.tile_height = 16,
+	.offset_x = 0,
+	.tracking = 4,
+	.char_width = 12,
+	.char_widths = {
+		['I'] = 2,
+		['1'] = 8,
+		['.'] = 2,
+		['-'] = 10,
+		['\''] = 2,
+		['!'] = 2,
+		[' '] = 8,
+	},
+	.kern_pairs = {
+		['A']['T'] = -2,
+		['T']['A'] = -2,
+		['A']['V'] = -2,
+		['V']['A'] = -2,
+		['T']['-'] = -2,
+		['-']['T'] = -2,
+	},
+};
+
+void Font_init(Font* font) {
+	char path[256];
+	sprintf(path, "%s/%s", ASSETS_PATH, font->name);
+	font->bitmap = IMG_Load(path);
+	SDL_SetSurfaceBlendMode(font->bitmap, SDL_BLENDMODE_BLEND);
+	
+	font->tiles_wide = font->bitmap->w / font->tile_width;
+	font->tiles_high = font->bitmap->h / font->tile_height;
+	font->missing = (font->tiles_wide * font->tiles_high) - 1;
+	
+	memset(font->map, font->missing, sizeof(font->map));
+	for (uint8_t i=0; font->charset[i]; i++) {
+		unsigned char c = font->charset[i];
+		font->map[c] = (uint8_t)i;
+		if (!font->char_widths[c]) {
+			if (font->low_width && c>='a' && c<='z') {
+				font->char_widths[c] = font->low_width;
+			}
+			else {
+				font->char_widths[c] = font->char_width;
+			}
+		}
+	}
+}
+void Font_quit(Font* font) {
+	SDL_FreeSurface(font->bitmap);
+}
+
+static void __Font_drawChar(Font* font, SDL_Surface* dst, unsigned char c, int x, int y) {
+	int i = c<128 ? font->map[c] : font->missing;
+	int tx = i % font->tiles_wide;
+	int ty = i / font->tiles_wide;
+	int tw = font->tile_width;
+	int th = font->tile_height;
+	SDL_BlitSurface(font->bitmap, &(SDL_Rect){tx*tw,ty*th,tw,th}, dst, &(SDL_Rect){x,y,tw,th});
+}
+
+void __Font_drawText(Font* font, const char* text, int* out_width, int* out_height, SDL_Surface** out_surface) {
+	SDL_Surface* dst = NULL;
+	if (out_surface) {
+		int w = 0;
+		int h = 0;
+		__Font_drawText(font, text, &w, &h, NULL);
+		dst = SDL_CreateRGBSurfaceWithFormat(0, w,h, 32, SDL_PIXELFORMAT_RGBA32);
+		SDL_FillRect(dst, NULL, 0);
+	}
+	
+	const char* tmp = text;
+	int ow = 0;
+	int oh = font->tile_height;
+	while (*tmp) {
+		unsigned char c = *tmp++;
+		unsigned char n = *tmp;
+		if (!font->char_widths[c]) c = toupper(c);
+		if (n && !font->char_widths[n]) n = toupper(n);
+		
+		if (out_surface) __Font_drawChar(font, dst, c, ow,0);
+
+		ow += font->char_widths[c] ? font->char_widths[c] : font->char_width;
+		if (n) {
+			ow += font->tracking;
+			if (font->kern_pairs[c][n]) {
+				ow += font->kern_pairs[c][n];
+			}
+			else {
+				ow += font->kern_pairs[0][n];
+			}
+		}
+	}
+	ow -= font->offset_x; // reverse pad?
+	
+	if (out_width) *out_width = ow;
+	if (out_height) *out_height = oh;
+	if (out_surface) *out_surface = dst;
+}
+
+void Font_getTextSize(Font* font, const char* text, int* out_width, int* out_height) {
+	__Font_drawText(font, text, out_width, out_height, NULL);
+}
+
+SDL_Surface* Font_drawText(Font* font, const char* text) {
+	SDL_Surface* surface = NULL;
+	__Font_drawText(font, text, NULL, NULL, &surface);
+	return surface;
+}
+
+typedef void (*Font_renderFunc)(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color);
+
+void Font_renderText(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color) {
+	x += font->offset_x;
+	y += font->offset_y;
+	SDL_Surface* tmp = Font_drawText(font, text);
+	SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, tmp);
+	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+	SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
+	real_SDL_RenderCopy(renderer, texture, NULL, &(SDL_Rect){x,y,tmp->w,tmp->h});
+	SDL_DestroyTexture(texture);
+	SDL_FreeSurface(tmp);
+}
+void Font_shadowText(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color) {
+	x += font->offset_x;
+	y += font->offset_y;
+	
+	SDL_Surface* surface = Font_drawText(font, text);
+	SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+
+	SDL_SetTextureColorMod(texture, 0,0,0);
+	real_SDL_RenderCopy(renderer, texture, NULL, &(SDL_Rect){x+2,y+2,surface->w,surface->h});
+	
+	SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
+	real_SDL_RenderCopy(renderer, texture, NULL, &(SDL_Rect){x,y,surface->w,surface->h});
+
+	SDL_DestroyTexture(texture);
+	SDL_FreeSurface(surface);
+}
+
+// --------------------------------------------
+
+void Fonts_init(void) {
+	Font_init(font36);
+	Font_init(font24);
+	Font_init(font16);
+}
+void Fonts_quit(void) {
+	Font_quit(font36);
+	Font_quit(font24);
+	Font_quit(font16);
+}
+
+// --------------------------------------------
 // custom menu
 // --------------------------------------------
 
@@ -809,27 +1055,22 @@ static void Device_sleep(void) {
 	Device_setLED(0);
 }
 static void Device_goodbye(void) {
-	SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
-	real_SDL_RenderClear(app.renderer);
+	// this should be cached but speed doesn't really matter here
+	SDL_Surface* s = IMG_Load(ASSETS_PATH "/bg.png");
+	SDL_Texture* t = SDL_CreateTextureFromSurface(app.renderer, s);
+	real_SDL_RenderCopy(app.renderer, t, NULL, &(SDL_Rect){0,0,s->w,s->h});
+	SDL_FreeSurface(s);
+	SDL_DestroyTexture(t);
+	
+	Font_shadowText(app.renderer, font24, "Dedicated OS",	6, 6, LIGHT_COLOR);
+	
 	const char* lines[] = {
 		"Saving &",
 		"shutting",
 		"down...",
 	};
-	SDL_Surface* tmp;
-	SDL_Texture* texture;
-	int y = (400 - 144) / 2;
 	for (int i=0; i<3; i++) {
-		tmp = TTF_RenderUTF8_Blended(app.font, lines[i], WHITE_COLOR);
-		texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
-		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-		
-		int x = (SCREEN_WIDTH - tmp->w) / 2;
-		real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x,y,tmp->w,tmp->h});
-	
-		SDL_FreeSurface(tmp);
-		SDL_DestroyTexture(texture);
-		y += 48; // line_height
+		Font_shadowText(app.renderer, font36, lines[i], 6, 42+(i*36), WHITE_COLOR);
 	}
 	real_SDL_RenderPresent(app.renderer);
 }
@@ -1118,9 +1359,7 @@ static void App_init(void) {
 	
 	App_set(app.current);
 	
-	TTF_Init();
-	app.font = TTF_OpenFont(ASSETS_PATH "/Inter_24pt-BlackItalic.ttf", 48);
-	app.mini = TTF_OpenFont(ASSETS_PATH "/Inter_24pt-BlackItalic.ttf", 24);
+	Fonts_init();
 	
 	app.bat = open(BAT_PATH "capacity", O_RDONLY);
 	app.usb = open(USB_PATH "online", O_RDONLY);
@@ -1140,9 +1379,7 @@ static void App_quit(void) {
 	close(app.bat);
 	close(app.usb);
 	
-	TTF_CloseFont(app.mini);
-	TTF_CloseFont(app.font);
-	TTF_Quit();
+	Fonts_quit();
 	
 	Settings_save();
 }
@@ -1157,7 +1394,7 @@ static void App_render(void) {
 		real_SDL_RenderCopy(app.renderer, app.screens[i], NULL, &app.rects[i]);
 	}
 }
-static int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_lines) {
+static int App_wrap(Font* font, char* text, int max_lines, char** lines, int* splits) {
 	int line_count = 0;
 
 	char line[1024] = {0};
@@ -1177,7 +1414,8 @@ static int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_lin
 		// wrap on hyphen
 		if (strcmp(word, "-") == 0) {
 			if (strlen(line) > 0 && line_count < max_lines) {
-				lines[line_count++] = TTF_RenderUTF8_Blended(font, line, WHITE_COLOR);
+				lines[line_count++] = strdup(line);
+				splits[line_count] = 1;
 				line[0] = '\0';
 			}
 			while (isspace(*p)) p++;
@@ -1189,16 +1427,15 @@ static int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_lin
 		if (strlen(line)>0) sprintf(test_line,"%s %s", line, word);
 		else sprintf(test_line,"%s", word);
 	
-		TTF_SizeUTF8(font, test_line, &line_width, NULL);
+		Font_getTextSize(font, test_line, &line_width, NULL);
 		
-		int ow = line_count==0 ? 96 : 0;
+		int ow = 6 + 6;
 		if (line_width<SCREEN_WIDTH-ow) {
 			strcpy(line, test_line);
 		}
 		else {
 			if (line_count<max_lines) {
-				SDL_Surface* txt = TTF_RenderUTF8_Blended(font, line, WHITE_COLOR);
-				lines[line_count++] = txt;
+				lines[line_count++] = strdup(line);
 			}
 			else {
 				line[0] = '\0';
@@ -1213,13 +1450,13 @@ static int App_wrap(TTF_Font* font, char* text, SDL_Surface** lines, int max_lin
 
 	// add trailing line
 	if (strlen(line)>0 && line_count<max_lines) {
-		SDL_Surface* txt = TTF_RenderUTF8_Blended(font, line, WHITE_COLOR);
-		lines[line_count++] = txt;
+		lines[line_count++] = strdup(line);
 	}
 	return line_count;
 }
 
-static int AA_rect(int x, int y, int w, int h, int s, SDL_Color c) {
+// TODO: no longer antialiased, switch to images
+static void AA_rect(int x, int y, int w, int h, int s, SDL_Color c) {
 	if (s==0) {
 		// body
 		SDL_SetRenderDrawColor(app.renderer, c.r,c.g,c.b,c.a);
@@ -1229,16 +1466,6 @@ static int AA_rect(int x, int y, int w, int h, int s, SDL_Color c) {
 			{x+w-1, y+1,   1, h-2}, // right
 		};
 		SDL_RenderFillRects(app.renderer, rects, NUMBER_OF(rects));
-		
-		// corners
-		SDL_SetRenderDrawColor(app.renderer, c.r,c.g,c.b,c.a/2);
-		const SDL_Point points[] = {
-			{x + 0, y + 0}, // top left
-			{x+w-1, y + 0}, // top right
-			{x + 0, y+h-1}, // bottom left
-			{x+w-1, y+h-1}, // bottom right
-		};
-		SDL_RenderDrawPoints(app.renderer, points, NUMBER_OF(points));
 	}
 	else {
 		// outline
@@ -1252,25 +1479,9 @@ static int AA_rect(int x, int y, int w, int h, int s, SDL_Color c) {
 			{x+w-1, y + 1,   1, h-2}, // right
 		};
 		SDL_RenderFillRects(app.renderer, rects, NUMBER_OF(rects));
-		
-		// corners
-		SDL_SetRenderDrawColor(app.renderer, c.r,c.g,c.b,c.a/2);
-		const SDL_Point points[] = {
-			// outer
-			{x + 0, y + 0}, // top left
-			{x+w-1, y + 0}, // top right
-			{x + 0, y+h-1}, // bottom left
-			{x+w-1, y+h-1}, // bottom right
-			// inner
-			{x  +  s, y  +  s}, // top left
-			{x+w-s-1, y  +  s}, // top right
-			{x  +  s, y+h-s-1}, // bottom left
-			{x+w-s-1, y+h-s-1}, // bottom right
-		};
-		SDL_RenderDrawPoints(app.renderer, points, NUMBER_OF(points));
 	}
 }
-static int AA_bolt(int x, int y, SDL_Color c) {
+static void AA_bolt(int x, int y, SDL_Color c) {
 	const SDL_Rect rects[] = {
 		// top left
 		{x+ 6,y+ 0, 6,2},
@@ -1290,38 +1501,8 @@ static int AA_bolt(int x, int y, SDL_Color c) {
 	};
 	SDL_SetRenderDrawColor(app.renderer, c.r,c.g,c.b,c.a);
 	SDL_RenderFillRects(app.renderer, rects, NUMBER_OF(rects));
-	
-	// antialias
-	const SDL_Point points[] = {
-		// top left
-		{x+ 5,y+ 1},
-		{x+ 4,y+ 3},
-		{x+ 3,y+ 5},
-		{x+ 2,y+ 7},
-		{x+ 1,y+ 9},
-		{x+ 0,y+11},
-		// top right
-		{x+12,y+ 0},
-		{x+11,y+ 2},
-		{x+10,y+ 4},
-		{x+ 9,y+ 6},
-		// bottom left
-		{x+ 9,y+13},
-		{x+ 8,y+15},
-		{x+ 7,y+17},
-		{x+ 6,y+19},
-		// bottom right
-		{x+18,y+ 8},
-		{x+17,y+10},
-		{x+16,y+12},
-		{x+15,y+14},
-		{x+14,y+16},
-		{x+13,y+18},
-	};
-	SDL_SetRenderDrawColor(app.renderer, c.r,c.g,c.b,c.a/2);
-	SDL_RenderDrawPoints(app.renderer, points, NUMBER_OF(points));
 }
-static int AA_bat(int x, int y, int battery, SDL_Color c) {
+static void AA_bat(int x, int y, int battery, SDL_Color c) {
 	AA_rect(x,y,48,28, 4, c);
 	AA_rect(x+47,y+8,5,12, 0, c);
 	
@@ -1329,74 +1510,41 @@ static int AA_bat(int x, int y, int battery, SDL_Color c) {
 	if (w>0) AA_rect(x+8,y+8,w+2,12, 0, c);
 }
 
-static int App_battery(int x, int y, int battery, int is_charging, int shadowed) {
+static void App_battery(int x, int y, int battery, int is_charging, int shadowed) {
 	SDL_Color c = TRIAD_ALPHA(WHITE_TRIAD,0xff);
-	if (battery<=10) c = TRIAD_ALPHA(RED_TRIAD,0xff);
-	else if (battery<=20) c = TRIAD_ALPHA(YELLOW_TRIAD,0xff);
-	else if (battery>=100) c = TRIAD_ALPHA(GREEN_TRIAD,0xff);
-	
+
 	if (shadowed) AA_bat(x+2,y+2, battery, TRIAD_ALPHA(BLACK_TRIAD,0xff));
 	AA_bat(x,y, battery, c);
 
-	if (is_charging) {
+	if (is_charging && battery<100) {
 		x -= 23;
 		y += 4;
 		AA_bolt(x+2,y+2,TRIAD_ALPHA(BLACK_TRIAD,0xff));
 		AA_bolt(x,y,c);
 	}
 }
-static SDL_Surface* App_kern(char* label, SDL_Color color) {
-	if (strcmp(label,"SAVE")!=0) return TTF_RenderUTF8_Blended(app.mini, label, color);
-	
-	int k = -3; // you could park a bus between A and V in this typeface
-	int w,h;
-	TTF_SizeUTF8(app.mini, "SAVE", &w, &h);
-	SDL_Surface* dst = SDL_CreateRGBSurfaceWithFormat(0, w+k, h, 32, SDL_PIXELFORMAT_ARGB8888);
-	SDL_Surface* a = TTF_RenderUTF8_Blended(app.mini, "SA", color);
-	SDL_Surface* b = TTF_RenderUTF8_Blended(app.mini, "VE", color);
-	SDL_BlitSurface(a,NULL,dst,NULL);
-	SDL_BlitSurface(b,NULL,dst,&(SDL_Rect){a->w+k,0});
-	SDL_FreeSurface(a);
-	SDL_FreeSurface(b);
-	return dst;
-}
 
 static int in_drastic_menu = 0; // TODO: only used for debug, and I seem to have broken it at some point :cold_sweat:
 
 static void App_OSD(char* label, int value, int max) {
+	int nh = 28;
 	int x,y,w,h;
-	
-	TTF_SizeUTF8(app.mini, label, &w, NULL);
-	w = 8 + w + 8 + 236 + 8;
-	h = 8 + 28 + 8;
+	Font_getTextSize(font16, label, &w, &h);
+	w = 252;
+	h = 64;
 	x = (SCREEN_WIDTH - w) / 2;
 	SDL_Rect* rect = &app.rects[0];
-	y = rect->y + rect->h - h - 16;
+	y = rect->y + rect->h - h - 32;
 	
 	AA_rect(x,y,w,h, 0, TRIAD_ALPHA(BLACK_TRIAD,0x60));
 
-	SDL_Surface* tmp = TTF_RenderUTF8_Blended(app.mini, label, WHITE_COLOR);
-	SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
-	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-	
-	w = tmp->w;
-	
-	// shadpw
-	SDL_SetTextureColorMod(texture, BLACK_TRIAD);
-	real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x+8+2,y+8+2,tmp->w,tmp->h});
-	SDL_SetTextureColorMod(texture, WHITE_TRIAD);
-	
-	// label
-	real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x+8,y+8,tmp->w,tmp->h});
-	SDL_FreeSurface(tmp);
-	SDL_DestroyTexture(texture);
+	Font_shadowText(app.renderer, font16, label, x+8, y+8, LIGHT_COLOR);
 	
 	int nw = max==10?20:8;
-	int nh = 28;
 	int no = max==10?24:12;
 	for (int i=0; i<max; i++) {
-		int nx = x + 8 + w + 8;
-		int ny = y + 8;
+		int nx = x + 8;
+		int ny = y + 28;
 		AA_rect(nx+i*no+2,ny+2,nw,nh, 0, BLACK_COLOR);
 		if (i<value) {
 			AA_rect(nx+i*no,ny,nw,nh, 0, WHITE_COLOR);
@@ -1574,12 +1722,10 @@ static void App_menu(void) {
 			char* save_items[] = {
 				"SAVE",
 				"LOAD",
-				// "LIBRARY",
 				"RESET",
 			};
 			char* load_items[] = {
 				"LOAD",
-				// "LIBRARY",
 			};
 			
 			char** items;
@@ -1611,37 +1757,27 @@ static void App_menu(void) {
 			
 			real_SDL_RenderCopy(app.renderer, app.overlay, NULL, NULL);
 			
+			// system
+			Font_shadowText(app.renderer, font24, "Nintendo DS", 6,6, LIGHT_COLOR);
+
 			int x,y,w,h;
 			
 			// battery
-			App_battery(424,8, battery,is_charging,1);
+			App_battery(424,6, battery,is_charging,1);
 			
 			// game name
 			char name[MAX_FILE];
 			App_getDisplayName(app.items[current], name);
 	
 			#define MAX_LINES 8
-			SDL_Surface* lines[MAX_LINES] = {0};
-			int line_count = App_wrap(app.font, name, lines, MAX_LINES);
-			
-			int line_height = 48;
-			h = line_count * line_height;
-			x = 0;
-			y = -10;
+			char* lines[MAX_LINES];
+			int splits[MAX_LINES] = {0};
+			int line_count = App_wrap(font36, name, MAX_LINES, lines, splits);
+			SDL_Color color = WHITE_COLOR;
 			for (int i=0; i<line_count; i++) {
-				SDL_Surface* line = lines[i];
-				SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, line);
-				SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-				
-				SDL_SetTextureColorMod(texture, BLACK_TRIAD);
-				real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x+2,y+2,line->w,line->h});
-				SDL_SetTextureColorMod(texture, WHITE_TRIAD);
-				
-				real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x,y,line->w,line->h});
-				SDL_FreeSurface(line);
-				SDL_DestroyTexture(texture);
-				lines[i] = NULL;
-				y += line_height;
+				if (splits[i]) color = LIGHT_COLOR;
+				Font_shadowText(app.renderer, font36, lines[i], 6, 42+(i*36), color);
+				free(lines[i]);
 			}
 			
 			// relative to game name (shifts)
@@ -1657,46 +1793,34 @@ static void App_menu(void) {
 			
 			// int mw = 0;
 			// for (int i=0; i<count; i++) {
-			// 	TTF_SizeUTF8(app.mini, items[i], &w, NULL);
+			// 	Font_getTextSize(font24, items[i], &w, NULL);
 			// 	if (w>mw) mw = w;
 			// }
 			// w = mw;
 
-			TTF_SizeUTF8(app.mini, "RESET", &w, NULL);
+			Font_getTextSize(font24, "Reset", &w, NULL);
 			w = 8 + w + 8;
 			x = (SCREEN_WIDTH - w) / 2;
 			
-			int oh = (((count-1) * 40) + 32);
+			int oh = ((count-1) * 40) + 36;
 			y += (h - oh) / 2;
 			h = oh;
+			oh = 40;
 			
 			AA_rect(x-8,y-8,8+w+8,8+h+8, 0, TRIAD_ALPHA(BLACK_TRIAD,0x40));
 			
 			for (int i=0; i<count; i++) {
+				Font_renderFunc renderer = Font_shadowText;
 				SDL_Color color = WHITE_COLOR;
+				
 				if (i==selected) {
-					AA_rect(x+2,y+2,w,32, 0, TRIAD_ALPHA(BLACK_TRIAD,0xff));
-					AA_rect(x,y,w,32, 0, TRIAD_ALPHA(WHITE_TRIAD,0xff));
+					AA_rect(x+2,y+(i*oh)+2,w,36, 0, TRIAD_ALPHA(BLACK_TRIAD,0xff));
+					AA_rect(x,y+(i*oh),w,36, 0, TRIAD_ALPHA(WHITE_TRIAD,0xff));
+					renderer = Font_renderText;
 					color = BLACK_COLOR;
 				}
 				
-				tmp = App_kern(items[i], color);
-				SDL_Texture* texture = SDL_CreateTextureFromSurface(app.renderer, tmp);
-				SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-				
-				int ox = 8;
-				// ox = (w - tmp->w)/2; // or center
-				if (i!=selected) {
-					SDL_SetTextureColorMod(texture, BLACK_TRIAD);
-					real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x+ox+2,y+1+2,tmp->w,tmp->h});
-					SDL_SetTextureColorMod(texture, WHITE_TRIAD);
-				}
-				
-				real_SDL_RenderCopy(app.renderer, texture, NULL, &(SDL_Rect){x+ox,y+1,tmp->w,tmp->h});
-				SDL_FreeSurface(tmp);
-				SDL_DestroyTexture(texture);
-				
-				y += 40;
+				renderer(app.renderer, font24, items[i], x+8, y+8+(i*oh), color);
 			}
 			
 			// volume/brightness osd
@@ -1866,7 +1990,7 @@ void SDL_RenderPresent(SDL_Renderer * renderer) {
 	if (!app.menu) {
 		int battery = getInt(app.bat);
 		int is_charging = getInt(app.usb);
-		if (battery<=10 && !is_charging) App_battery(424,8, battery,0,0);
+		if (battery<=10 && !is_charging) App_battery(424,6, battery,0,0);
 		
 		if (app.osd==OSD_VOLUME) App_OSD("VOLUME", settings.volume, 20);
 		else if (app.osd==OSD_BRIGHTNESS) App_OSD("BRIGHTNESS", settings.brightness, 10);
