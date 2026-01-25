@@ -1,7 +1,16 @@
+- implement archive
+	- entering the archive may change app.items
+		- including unloading the currently playing game
+	- archive shares half the screen rendering logic with menu
+	- build array from app.items + files in archive
+		- array will need to be a struct with file name and shown
+		- then on back out check if any hidden file is currently in games and move to archive and vice versa
+		- rebuild app.items
+		- if current game has been archived load the next game
+		- handle no games by kicking back into archive view?
+
 - update lichee patch for new boot-resource size
 	device/config/chips/a133/configs/aw3/linux/sys_partition.fex
-
-- implement new dedicated fonts
 
 - cleanup toolchain makefile
 

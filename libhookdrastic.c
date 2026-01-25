@@ -97,6 +97,7 @@ static struct {
 	SDL_Texture* screens[SCREEN_COUNT];
 	SDL_Texture* preview[SCREEN_COUNT];
 	SDL_Texture* overlay;
+	SDL_Texture* eye;
 	SDL_Rect rects[SCREEN_COUNT];
 	
 	int count;
@@ -300,6 +301,7 @@ int SDL_SetTextureScaleMode(SDL_Texture * texture, SDL_ScaleMode scaleMode);
 // logging
 // --------------------------------------------
 
+#define LOG(...) printf(__VA_ARGS__); printf("\n"); fflush(stdout)
 static inline void LOG_event(SDL_Event* event) {
 	switch (event->type) {
 		case SDL_QUIT:
@@ -1192,7 +1194,10 @@ static void App_getDisplayName(const char* in_name, char* out_name) {
 	// remove extension(s), eg. .p8.png
 	while ((tmp = strrchr(out_name, '.'))!=NULL) {
 		int len = strlen(tmp);
-		if (len>2 && len<=5) tmp[0] = '\0'; // 1-4 letter extension plus dot (was 1-3, extended for .doom files)
+		if (len>2 && len<=5) {
+			if (tmp[1]==' ') tmp[1] = '\0'; // excempt . followed by whitespace
+			else tmp[0] = '\0'; // 1-4 letter extension plus dot (was 1-3, extended for .doom files)
+		}
 		else break;
 	}
 	
@@ -1366,6 +1371,7 @@ static void App_quit(void) {
     }
     free(app.items);
 	
+	if (app.eye) SDL_DestroyTexture(app.overlay);
 	if (app.overlay) SDL_DestroyTexture(app.overlay);
 	if (app.preview[0]) SDL_DestroyTexture(app.preview[0]);
 	if (app.preview[1]) SDL_DestroyTexture(app.preview[1]);
@@ -1582,6 +1588,18 @@ static void App_menu(void) {
 		app.preview[0] = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256,192);
 		app.preview[1] = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256,192);
 	}
+	
+	char* save_items[] = {
+		"SAVE",
+		"LOAD",
+		"ARCHIVE",
+		"RESET",
+	};
+	char* load_items[] = {
+		"LOAD",
+		"ARCHIVE",
+	};
+	
 	int menu_at = SDL_GetTicks();
 	int selected = 0;
 	int capture = 0;
@@ -1651,18 +1669,22 @@ static void App_menu(void) {
 						else if (selected==1) { // LOAD
 							App_load();
 						}
-						else if (selected==2) { // RESET
+						else if (selected==2) { // ARCHIVE
+							// buh
+						}
+						else if (selected==3) { // RESET
 							App_reset();
 						}
 						in_menu = 0;
 					}
 					else {
-						if (selected==1) { // BACK
-							current = app.current;
-							selected = 0;
-							dirty = 1;
-						}
-						else if (selected==0) { // LOAD
+
+						// if (selected==1) { // BACK
+						// 	current = app.current;
+						// 	selected = 0;
+						// 	dirty = 1;
+						// }
+						if (selected==0) { // LOAD
 							App_save();
 							App_set(current);
 							Settings_save();
@@ -1673,6 +1695,9 @@ static void App_menu(void) {
 							loader.after = LOADER_RESUME;
 							
 							in_menu = 0;
+						}
+						else if (selected==1) { // ARCHIVE
+							// buh
 						}
 					}
 				}
@@ -1713,15 +1738,6 @@ static void App_menu(void) {
 		if (dirty) {
 			dirty = 0;
 			
-			char* save_items[] = {
-				"SAVE",
-				"LOAD",
-				"RESET",
-			};
-			char* load_items[] = {
-				"LOAD",
-			};
-			
 			char** items;
 			int count;
 			if (current==app.current) {
@@ -1736,7 +1752,8 @@ static void App_menu(void) {
 			if (selected<0) selected += count;
 			selected %= count;
 			
-			int snap = selected==2 ? SNAP_RESET : (current==app.current && selected==0 ? SNAP_CURRENT : SNAP_SAVE);
+			// TODO: what do we display for ARCHIVE?
+			int snap = selected==3 ? SNAP_RESET : (current==app.current && selected==0 ? SNAP_CURRENT : SNAP_SAVE);
 			App_preview(current,0, snap);
 			App_preview(current,1, snap);
 			
@@ -1774,26 +1791,16 @@ static void App_menu(void) {
 				free(lines[i]);
 			}
 			
-			// relative to game name (shifts)
-			// y += 12;
-			// h = (SCREEN_HEIGHT / 2) - y;
-			
 			// center in bottom "screen"
 			y = h = SCREEN_HEIGHT / 2;
 			
-			// center in full screen
-			// y = 0;
-			// h = SCREEN_HEIGHT;
+			int mw = 0;
+			for (int i=0; i<count; i++) {
+				Font_getTextSize(font24, items[i], &w, NULL);
+				if (w>mw) mw = w;
+			}
 			
-			// int mw = 0;
-			// for (int i=0; i<count; i++) {
-			// 	Font_getTextSize(font24, items[i], &w, NULL);
-			// 	if (w>mw) mw = w;
-			// }
-			// w = mw;
-
-			Font_getTextSize(font24, "Reset", &w, NULL);
-			w = 8 + w + 8;
+			w = 8 + mw + 8;
 			x = (SCREEN_WIDTH - w) / 2;
 			
 			int oh = ((count-1) * 40) + 36;
