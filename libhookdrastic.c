@@ -22,6 +22,7 @@
 
 #define SDCARD_PATH		"/mnt/SDCARD"
 #define GAMES_PATH 		SDCARD_PATH "/games"
+#define ARCHIVE_PATH	GAMES_PATH "/archive"
 #define SYSTEM_PATH 	SDCARD_PATH "/system"
 #define ASSETS_PATH		SYSTEM_PATH "/assets"
 #define USERDATA_PATH	SDCARD_PATH "/userdata"
@@ -43,19 +44,21 @@
 
 #define BLACK_TRIAD 	0x00,0x00,0x00
 #define WHITE_TRIAD 	0xff,0xff,0xff
-#define LIGHT_TRIAD 	0xc1,0xc1,0xc1
+#define LIGHT_TRIAD 	0xbb,0xbb,0xbb
+#define DARK_TRIAD 		0x33,0x33,0x33
 #define RED_TRIAD		0xff,0x33,0x33
 #define GREEN_TRIAD		0x33,0xcc,0x33
 #define YELLOW_TRIAD	0xff,0xcc,0x00
 
-#define BLACK_COLOR (SDL_Color){BLACK_TRIAD,0xff}
-#define WHITE_COLOR (SDL_Color){WHITE_TRIAD,0xff}
-#define LIGHT_COLOR (SDL_Color){LIGHT_TRIAD,0xff}
-#define RED_COLOR (SDL_Color){RED_TRIAD,0xff}
-#define GREEN_COLOR (SDL_Color){GREEN_TRIAD,0xff}
-#define YELLOW_COLOR (SDL_Color){YELLOW_TRIAD,0xff}
-
 #define TRIAD_ALPHA(t,a) (SDL_Color){t,a}
+
+#define BLACK_COLOR		TRIAD_ALPHA(BLACK_TRIAD,0xff)
+#define WHITE_COLOR		TRIAD_ALPHA(WHITE_TRIAD,0xff)
+#define LIGHT_COLOR		TRIAD_ALPHA(LIGHT_TRIAD,0xff)
+#define DARK_COLOR		TRIAD_ALPHA(DARK_TRIAD,0xff)
+#define RED_COLOR		TRIAD_ALPHA(RED_TRIAD,0xff)
+#define GREEN_COLOR		TRIAD_ALPHA(GREEN_TRIAD,0xff)
+#define YELLOW_COLOR	TRIAD_ALPHA(YELLOW_TRIAD,0xff)
 
 // --------------------------------------------
 
@@ -83,11 +86,21 @@
 
 // --------------------------------------------
 
-enum {
+typedef enum {
 	OSD_NONE,
 	OSD_VOLUME,
 	OSD_BRIGHTNESS,
-};
+} OSDMode;
+
+typedef enum {
+	MODE_MENU,
+	MODE_ARCHIVE,
+} MenuMode;
+
+typedef struct {
+	char name[MAX_FILE];
+	int hidden;
+} Entry;
 
 static struct {
 	uintptr_t base;
@@ -98,18 +111,20 @@ static struct {
 	SDL_Texture* preview[SCREEN_COUNT];
 	SDL_Texture* overlay;
 	SDL_Texture* eye;
+	SDL_Texture* bg;
 	SDL_Rect rects[SCREEN_COUNT];
 	
 	int count;
 	int current;
 	int capacity;
-	char** items;
+	Entry* items;
 	
 	char game_path[MAX_PATH];
 	char game_name[MAX_FILE];
 	
 	int bat;
 	int usb;
+	int batmon;
 	
 	int synced;
 	int menu;
@@ -210,7 +225,7 @@ static void Settings_save(void) {
 	fclose(file);
 }
 static void Settings_setVolume(int value) {
-	char cmd[256];
+	char cmd[MAX_FILE];
 	static const uint8_t raw[21] = {
 		  0, // mute
 		120, // 0
@@ -239,7 +254,7 @@ static void Settings_setVolume(int value) {
 	settings.volume = value;
 }
 static void Settings_setBrightness(int value) {
-	char cmd[256];
+	char cmd[MAX_FILE];
 	static const uint8_t raw[11] = {
 		  1, // 0
 		  8, // 8
@@ -291,9 +306,9 @@ static int (*real__printf_chk)(int flag, const char *fmt, ...) = NULL;
 
 typedef enum SDL_ScaleMode
 {
-    SDL_ScaleModeNearest, /**< nearest pixel sampling */
-    SDL_ScaleModeLinear,  /**< linear filtering */
-    SDL_ScaleModeBest     /**< anisotropic filtering */
+	SDL_ScaleModeNearest, /**< nearest pixel sampling */
+	SDL_ScaleModeLinear,  /**< linear filtering */
+	SDL_ScaleModeBest	 /**< anisotropic filtering */
 } SDL_ScaleMode;
 int SDL_SetTextureScaleMode(SDL_Texture * texture, SDL_ScaleMode scaleMode);
 
@@ -424,16 +439,16 @@ static const char* get_access_name(int access) {
 }
 static void hexdump(const void *ptr, size_t len) {
 	const unsigned char *p = (const unsigned char *)ptr;
-	for (size_t i = 0; i < len; i += 16) {
+	for (size_t i = 0; i<len; i += 16) {
 		printf("%08zx  ", i);
-		for (size_t j = 0; j < 16; ++j) {
-			if (i + j < len) printf("%02X ", p[i + j]);
+		for (size_t j = 0; j<16; ++j) {
+			if (i + j<len) printf("%02X ", p[i + j]);
 			else			 printf("   ");
 		}
 		printf(" ");
-		for (size_t j = 0; j < 16 && i + j < len; ++j) {
+		for (size_t j = 0; j<16 && i + j<len; ++j) {
 			unsigned char c = p[i + j];
-			printf("%c", (c >= 32 && c < 127) ? c : '.');
+			printf("%c", (c>=32 && c<127) ? c : '.');
 		}
 		printf("\n");
 	}
@@ -501,7 +516,7 @@ static void drastic_audio_pause(int flag) {
 }
 static inline int drastic_is_saving(void) {
 	const volatile uint32_t *busy = (const volatile uint32_t *)(app.base + 0x3ec27c);
-	return __atomic_load_n(busy, __ATOMIC_ACQUIRE) != 0;
+	return __atomic_load_n(busy, __ATOMIC_ACQUIRE)!=0;
 }
 static void drastic_await_save(void) {
 	while (drastic_is_saving()) real_SDL_Delay(1);
@@ -554,14 +569,14 @@ static void drastic_quit(void) {
 // --------------------------------------------
 
 static inline int getInt(int f) {
-    if (f<0) return 0;
+	if (f<0) return 0;
 
-    char b[32];
-    int n = pread(f, b, sizeof(b) - 1, 0);
-    if (n<=0) return 0;
+	char b[32];
+	int n = pread(f, b, sizeof(b) - 1, 0);
+	if (n<=0) return 0;
 
-    b[n] = '\0';
-    return atoi(b);
+	b[n] = '\0';
+	return atoi(b);
 }
 static inline void putString(const char* path, const char* value) {
 	int f = open(path, O_WRONLY);
@@ -583,7 +598,7 @@ static inline int copyFile(const char *src, const char *dst) {
 	
 	char buf[64*1024];
 	size_t n;
-	while ((n = fread(buf, 1, sizeof buf, in)) > 0) {
+	while ((n = fread(buf, 1, sizeof buf, in))>0) {
 		fwrite(buf, 1, n, out);
 	}
 	
@@ -591,6 +606,40 @@ static inline int copyFile(const char *src, const char *dst) {
 	fclose(out);
 	
 	return 0;
+}
+static inline int exists(const char* path) {
+	return access(path, F_OK)==0;
+}
+
+static int compareNatural(const char *a, const char *b) {
+	while (*a && *b) {
+		// ensure "Game 10.ext" sorts after "Game 2.ext"
+		if (isdigit(*a) && isdigit(*b)) {
+			char *ea, *eb;
+			long na = strtol(a, &ea, 10);
+			long nb = strtol(b, &eb, 10);
+			
+			if (na!=nb) return (na<nb) ? -1 : 1;
+
+			a = ea;
+			b = eb;
+		} else {
+			int ca = tolower(*a);
+			int cb = tolower(*b);
+			
+			if (ca!=cb) {
+				// special case: treat '.' as less than ' '
+				// ensure "Game.ext" sorts before "Game 2.ext"
+				if (ca=='.' && cb==' ') return -1;
+				if (ca==' ' && cb=='.') return  1;
+				return ca - cb;
+			}
+			
+			a++;
+			b++;
+		}
+	}
+	return tolower(*a) - tolower(*b);
 }
 
 // --------------------------------------------
@@ -601,12 +650,12 @@ static inline int copyFile(const char *src, const char *dst) {
 #define REPEAT_INTERVAL 100
 
 static int Repeater_fakeButtonEvent(SDL_Event* event, int btn, int press) {
-    SDL_memset(event, 0, sizeof(*event));
-    event->type = event->jbutton.type = press ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
-    event->jbutton.which  = 0;
-    event->jbutton.button = btn;
-    event->jbutton.state  = press ? SDL_PRESSED : SDL_RELEASED;
-    event->jbutton.timestamp = SDL_GetTicks();
+	SDL_memset(event, 0, sizeof(*event));
+	event->type = event->jbutton.type = press ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
+	event->jbutton.which  = 0;
+	event->jbutton.button = btn;
+	event->jbutton.state  = press ? SDL_PRESSED : SDL_RELEASED;
+	event->jbutton.timestamp = SDL_GetTicks();
 	return 1;
 }
 static int Repeater_pollEvent(SDL_Event* event) {
@@ -688,7 +737,7 @@ typedef struct {
 
 Font* font36 = &(Font){
 	.name = "font-dedicated-36.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+% ",
 	.tile_width = 36,
 	.tile_height = 36,
 	.offset_x = -2,
@@ -702,9 +751,8 @@ Font* font36 = &(Font){
 		['-'] = 24,
 		['\''] = 6,
 		['!'] = 6,
-		[' '] = 18,
-		['/'] = 36,
 		['&'] = 36,
+		[' '] = 12,
 	},
 	.kern_pairs = {
 		['A']['T'] = -6,
@@ -720,7 +768,7 @@ Font* font36 = &(Font){
 
 Font* font24 = &(Font){
 	.name = "font-dedicated-24.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+% ",
 	.tile_width = 24,
 	.tile_height = 24,
 	.offset_x = -1,
@@ -733,8 +781,8 @@ Font* font24 = &(Font){
 		['-'] = 16,
 		['\''] = 4,
 		['!'] = 4,
-		[' '] = 12,
-		['/'] = 24,
+		[' '] = 8,
+		['%'] = 21,
 	},
 	.kern_pairs = {
 		['A']['T'] = -4,
@@ -746,12 +794,37 @@ Font* font24 = &(Font){
 	},
 };
 
+Font* font18 = &(Font){
+	.name = "font-dedicated-18.png",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+% ",
+	.tile_width = 18,
+	.tile_height = 18,
+	.tracking = 3,
+	.char_width = 15,
+	.char_widths = {
+		['I'] = 3,
+		['1'] = 9,
+		['.'] = 3,
+		['-'] = 12,
+		['\''] = 3,
+		['!'] = 3,
+		[' '] = 6,
+	},
+	.kern_pairs = {
+		['A']['T'] = -3,
+		['T']['A'] = -3,
+		['A']['V'] = -3,
+		['V']['A'] = -3,
+		['T']['-'] = -3,
+		['-']['T'] = -3,
+	},
+};
+
 Font* font16 = &(Font){
 	.name = "font-dedicated-16.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+ ",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+% ",
 	.tile_width = 16,
 	.tile_height = 16,
-	.offset_x = 0,
 	.tracking = 4,
 	.char_width = 12,
 	.char_widths = {
@@ -761,7 +834,7 @@ Font* font16 = &(Font){
 		['-'] = 10,
 		['\''] = 2,
 		['!'] = 2,
-		[' '] = 8,
+		[' '] = 4,
 	},
 	.kern_pairs = {
 		['A']['T'] = -2,
@@ -774,7 +847,7 @@ Font* font16 = &(Font){
 };
 
 void Font_init(Font* font) {
-	char path[256];
+	char path[MAX_FILE];
 	sprintf(path, "%s/%s", ASSETS_PATH, font->name);
 	font->bitmap = IMG_Load(path);
 	SDL_SetSurfaceBlendMode(font->bitmap, SDL_BLENDMODE_BLEND);
@@ -861,27 +934,18 @@ SDL_Surface* Font_drawText(Font* font, const char* text) {
 
 typedef void (*Font_renderFunc)(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color);
 
-void Font_renderText(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color) {
+void __Font_renderText(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color, int s) {	
 	x += font->offset_x;
 	y += font->offset_y;
-	SDL_Surface* tmp = Font_drawText(font, text);
-	SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, tmp);
-	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-	SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
-	real_SDL_RenderCopy(renderer, texture, NULL, &(SDL_Rect){x,y,tmp->w,tmp->h});
-	SDL_DestroyTexture(texture);
-	SDL_FreeSurface(tmp);
-}
-void Font_shadowText(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color) {
-	x += font->offset_x;
-	y += font->offset_y;
-	
+
 	SDL_Surface* surface = Font_drawText(font, text);
 	SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
 	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-
-	SDL_SetTextureColorMod(texture, 0,0,0);
-	real_SDL_RenderCopy(renderer, texture, NULL, &(SDL_Rect){x+2,y+2,surface->w,surface->h});
+	
+	if (s) {
+		SDL_SetTextureColorMod(texture, 0,0,0);
+		real_SDL_RenderCopy(renderer, texture, NULL, &(SDL_Rect){x+2,y+2,surface->w,surface->h});
+	}
 	
 	SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
 	real_SDL_RenderCopy(renderer, texture, NULL, &(SDL_Rect){x,y,surface->w,surface->h});
@@ -890,16 +954,25 @@ void Font_shadowText(SDL_Renderer* renderer, Font* font, const char* text, int x
 	SDL_FreeSurface(surface);
 }
 
+void Font_renderText(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color) {
+	__Font_renderText(renderer, font, text, x,y, color, 0);
+}
+void Font_shadowText(SDL_Renderer* renderer, Font* font, const char* text, int x, int y, SDL_Color color) {
+	__Font_renderText(renderer, font, text, x,y, color, 1);
+}
+
 // --------------------------------------------
 
 void Fonts_init(void) {
 	Font_init(font36);
 	Font_init(font24);
+	Font_init(font18);
 	Font_init(font16);
 }
 void Fonts_quit(void) {
 	Font_quit(font36);
 	Font_quit(font24);
+	Font_quit(font18);
 	Font_quit(font16);
 }
 
@@ -912,7 +985,10 @@ enum {
 	SNAP_CURRENT,
 	SNAP_RESET,
 };
+
 static void App_screenshot(int game, int screen, int snap);
+static void App_battery(int battery, int is_charging, int shadowed);
+static void App_quit(void);
 
 static void App_sync(int force) {
 	if (force) app.synced = 0;
@@ -998,7 +1074,7 @@ static void Device_suspend(void) {
 	drastic_save_state(0);
 	drastic_await_save();
 	drastic_audio_pause(1);
-    
+	
 	putString("/sys/power/state", "mem");
 	
 	drastic_audio_pause(0);
@@ -1051,14 +1127,14 @@ static void Device_sleep(void) {
 	Device_setLED(0);
 }
 static void Device_goodbye(void) {
-	// this should be cached but speed doesn't really matter here
-	SDL_Surface* s = IMG_Load(ASSETS_PATH "/bg.png");
-	SDL_Texture* t = SDL_CreateTextureFromSurface(app.renderer, s);
-	real_SDL_RenderCopy(app.renderer, t, NULL, &(SDL_Rect){0,0,s->w,s->h});
-	SDL_FreeSurface(s);
-	SDL_DestroyTexture(t);
+	if (!app.bg) app.bg = IMG_LoadTexture(app.renderer, ASSETS_PATH "/bg.png");
+	real_SDL_RenderCopy(app.renderer, app.bg, NULL, NULL);
 	
 	Font_shadowText(app.renderer, font24, "Dedicated OS",	6, 6, LIGHT_COLOR);
+	
+	int battery = getInt(app.bat);
+	int is_charging = getInt(app.usb);
+	App_battery(battery,is_charging,1);	
 	
 	const char* lines[] = {
 		"Saving &",
@@ -1080,7 +1156,7 @@ static void Device_poweroff(void) {
 	Device_setLED(1);
 	drastic_quit();
 }
-#define SLEEP_TIMEOUT 2 * 60 * 1000 // two minutes
+#define SLEEP_TIMEOUT (2 * 60 * 1000) // two minutes
 #define WAKE_DEFER 250 // quarter of a second
 #define POWER_TIMEOUT 1000 // one second
 static int Device_handleEvent(SDL_Event* event) {
@@ -1089,27 +1165,30 @@ static int Device_handleEvent(SDL_Event* event) {
 	static int woken_at = 0;
 	static int power_at = 0;
 	
-	if (power_at && SDL_GetTicks()-power_at>=POWER_TIMEOUT) {
-		Device_poweroff();
+	if (!app.batmon) {
+		if (power_at && SDL_GetTicks()-power_at>=POWER_TIMEOUT) {
+			Device_poweroff();
+		}
+	
+		if (event->type==SDL_KEYDOWN) {
+			if (event->key.keysym.scancode==SCAN_POWER && event->key.repeat==0) {
+				power_at = SDL_GetTicks();
+				return 1;
+			}
+		}
+		else if (event->type==SDL_KEYUP) {
+			if (event->key.keysym.scancode==SCAN_POWER) {
+				power_at = 0;
+				if (SDL_GetTicks()-woken_at>WAKE_DEFER) {
+					Device_sleep();
+					woken_at = SDL_GetTicks();
+				}
+				return 1;
+			}
+		}
 	}
 	
-	if (event->type==SDL_KEYDOWN) {
-		if (event->key.keysym.scancode==SCAN_POWER && event->key.repeat==0) {
-			power_at = SDL_GetTicks();
-			return 1;
-		}
-	}
-	else if (event->type==SDL_KEYUP) {
-		if (event->key.keysym.scancode==SCAN_POWER) {
-			power_at = 0;
-			if (SDL_GetTicks()-woken_at>WAKE_DEFER) {
-				Device_sleep();
-				woken_at = SDL_GetTicks();
-			}
-			return 1;
-		}
-	}
-	else if (event->type==SDL_JOYBUTTONDOWN) {
+	if (event->type==SDL_JOYBUTTONDOWN) {
 		if (event->jbutton.button==JOY_MENU) {
 			menu_down = 1;
 			menu_combo = 0;
@@ -1214,24 +1293,45 @@ static void App_getDisplayName(const char* in_name, char* out_name) {
 	
 	// remove trailing whitespace
 	tmp = out_name + strlen(out_name) - 1;
-    while(tmp>out_name && isspace((unsigned char)*tmp)) tmp--;
-    tmp[1] = '\0';
+	while(tmp>out_name && isspace((unsigned char)*tmp)) tmp--;
+	tmp[1] = '\0';
 }
 static int App_sort(const void* a, const void* b) {
-    const char* i = *(const char**)a;
-    const char* j = *(const char**)b;
-    return strcasecmp(i, j);
+	const Entry *i = (const Entry *)a;
+	const Entry *j = (const Entry *)b;
+	return compareNatural(i->name, j->name);
 }
 
+static void App_empty(void) {
+	SDL_Init(SDL_INIT_VIDEO);
+	SDL_CreateWindow(NULL,0,0,SCREEN_WIDTH,SCREEN_HEIGHT,SDL_WINDOW_SHOWN);
+	SDL_CreateRenderer(app.window, -1, SDL_RENDERER_ACCELERATED);
+	
+	if (!app.bg) app.bg = IMG_LoadTexture(app.renderer, ASSETS_PATH "/bg.png");
+	
+	real_SDL_RenderCopy(app.renderer, app.bg, NULL, NULL);
+
+	Font_shadowText(app.renderer, font24, "Dedicated OS",	6, 6, LIGHT_COLOR);
+	Font_shadowText(app.renderer, font36, "No games found", 6, 42, WHITE_COLOR);
+	
+	real_SDL_RenderPresent(app.renderer);
+	
+	sleep(5);
+	unlink("/tmp/exec_loop");
+	App_quit();
+}
 static void App_set(int i) {
+	if (!app.count) App_empty();
+	
 	if (i>=app.count) i -= app.count;
 	if (i<0) i += app.count;
 	app.current = i;
 	
-	strcpy(settings.game, app.items[app.current]);
+	Entry* item = &app.items[app.current];
+	strcpy(settings.game, item->name);
 	
 	static char game_path[MAX_PATH];
-	sprintf(game_path, "%s/%s", GAMES_PATH, settings.game);
+	sprintf(game_path, "%s/%s", item->hidden ? ARCHIVE_PATH : GAMES_PATH, settings.game);
 	strcpy(app.game_path, game_path);
 	
 	strcpy(app.game_name, settings.game);
@@ -1249,7 +1349,7 @@ static void App_screenshot(int game, int screen, int snap) {
 	
 	char game_name[MAX_FILE];
 	if (snap==SNAP_CURRENT) strcpy(game_name, "current");
-	else strcpy(game_name, app.items[game]);
+	else strcpy(game_name, app.items[game].name);
 	char *dot = strrchr(game_name, '.');
 	if (dot && dot!=game_name) *dot = '\0';
 	
@@ -1280,13 +1380,13 @@ static void App_preview(int game, int screen, int snap) {
 	
 	char game_name[MAX_FILE];
 	if (snap==SNAP_CURRENT) strcpy(game_name, "current");
-	else strcpy(game_name, app.items[game]);
+	else strcpy(game_name, app.items[game].name);
 	char *dot = strrchr(game_name, '.');
 	if (dot && dot!=game_name) *dot = '\0';
 	
 	char path[MAX_PATH];
 	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
-	if (snap==SNAP_RESET || access(path, F_OK)!=0) sprintf(path, ASSETS_PATH "/screenshot-%i.png", screen);
+	if (snap==SNAP_RESET || !exists(path)) sprintf(path, ASSETS_PATH "/screenshot-%i.png", screen);
 
 	SDL_Log("preview: %s (snap: %i)", path, snap);
 	SDL_Surface* tmp = IMG_Load(path);
@@ -1296,14 +1396,14 @@ static void App_preview(int game, int screen, int snap) {
 	SDL_QueryTexture(texture, &format, NULL, &w, &h);
 
 	if (format==tmp->format->format) {
-	    SDL_UpdateTexture(texture, NULL, tmp->pixels, tmp->pitch);
+		SDL_UpdateTexture(texture, NULL, tmp->pixels, tmp->pitch);
 	} else {
-	    void *dst;
-	    int dst_pitch;
-	    if (SDL_LockTexture(texture, NULL, &dst, &dst_pitch) == 0) {
-	        SDL_ConvertPixels(w, h, tmp->format->format, tmp->pixels, tmp->pitch, format, dst, dst_pitch);
-	        SDL_UnlockTexture(texture);
-	    }
+		void *dst;
+		int dst_pitch;
+		if (SDL_LockTexture(texture, NULL, &dst, &dst_pitch)==0) {
+			SDL_ConvertPixels(w, h, tmp->format->format, tmp->pixels, tmp->pitch, format, dst, dst_pitch);
+			SDL_UnlockTexture(texture);
+		}
 	}
 	
 	SDL_FreeSurface(tmp);
@@ -1322,56 +1422,65 @@ static void App_init(void) {
 	putString(CPU_PATH "scaling_governor", "userspace");
 	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
 	
+	char* dirs[] = {
+		GAMES_PATH,
+		ARCHIVE_PATH,
+	};
+	
+	app.count = 0;
+	app.current = 0;
+	app.capacity = 16;
+	app.items = malloc(sizeof(Entry) * app.capacity);
+
+	Fonts_init();
+	
 	// get games
-	DIR* dir = opendir(GAMES_PATH);
-	if (dir) {
-		app.count = 0;
-		app.current = 0;
-		app.capacity = 16;
-		app.items = malloc(sizeof(char*) * app.capacity);
-		
-		struct dirent* entry;
-		while ((entry=readdir(dir))!=NULL) {
-			if (entry->d_name[0]=='.') continue;
-			if (entry->d_type==DT_DIR) continue;
+	for (int i=0; i<NUMBER_OF(dirs); i++) {
+		DIR* dir = opendir(dirs[i]);
+		if (dir) {
+			struct dirent* entry;
+			while ((entry=readdir(dir))!=NULL) {
+				if (entry->d_name[0]=='.') continue;
+				if (entry->d_type==DT_DIR) continue;
 			
-			if (app.count>=app.capacity) {
-				app.capacity *= 2;
-				app.items = realloc(app.items, sizeof(char*) * app.capacity);
+				if (app.count>=app.capacity) {
+					app.capacity *= 2;
+					app.items = realloc(app.items, sizeof(Entry) * app.capacity);
+				}
+				Entry* item = &app.items[app.count++];
+				item->hidden = i;
+				snprintf(item->name, MAX_FILE, "%s", entry->d_name);
 			}
-			app.items[app.count++] = strdup(entry->d_name);
+			closedir(dir);
 		}
-		closedir(dir);
-		
-		qsort(app.items, app.count, sizeof(char*), App_sort);
 	}
+	
+	if (app.count) qsort(app.items, app.count, sizeof(Entry), App_sort);
 	
 	// get index of last played game
 	if (*settings.game) {
 		for (int i=0; i<app.count; i++) {
-		    if (strcmp(app.items[i], settings.game)==0) {
+			if (strcmp(app.items[i].name, settings.game)==0) {
 				app.current = i;
-		        break;
-		    }
+				break;
+			}
 		}
 	}
 	
 	App_set(app.current);
 	
-	Fonts_init();
-	
 	app.bat = open(BAT_PATH "capacity", O_RDONLY);
 	app.usb = open(USB_PATH "online", O_RDONLY);
+	app.batmon = getInt(app.usb);
 }
+
 static void App_quit(void) {
 	SDL_Log("App_quit");
 	
-	for (size_t i=0; i<app.count; i++) {
-        free(app.items[i]);
-    }
-    free(app.items);
+	free(app.items);
 	
-	if (app.eye) SDL_DestroyTexture(app.overlay);
+	if (app.bg) SDL_DestroyTexture(app.bg);
+	if (app.eye) SDL_DestroyTexture(app.eye);
 	if (app.overlay) SDL_DestroyTexture(app.overlay);
 	if (app.preview[0]) SDL_DestroyTexture(app.preview[0]);
 	if (app.preview[1]) SDL_DestroyTexture(app.preview[1]);
@@ -1382,6 +1491,17 @@ static void App_quit(void) {
 	Fonts_quit();
 	
 	Settings_save();
+}
+static int App_next(int start, int dir) {
+	int i = start;
+	int count = app.count;
+	for (int _=0; _<count; _++) {
+		i += dir;
+		if (i>=count) i -= count;
+		else if (i<0) i += count;
+		if (!app.items[i].hidden || i==app.current) return i;
+	}
+	return start;
 }
 static void App_render(void) {
 	if (!app.renderer) return;
@@ -1412,8 +1532,8 @@ static int App_wrap(Font* font, char* text, int max_lines, char** lines, int* sp
 		word[word_len] = '\0';
 		
 		// wrap on hyphen
-		if (strcmp(word, "-") == 0) {
-			if (strlen(line) > 0 && line_count < max_lines) {
+		if (strcmp(word, "-")==0) {
+			if (strlen(line)>0 && line_count<max_lines) {
 				lines[line_count++] = strdup(line);
 				splits[line_count] = 1;
 				line[0] = '\0';
@@ -1428,9 +1548,10 @@ static int App_wrap(Font* font, char* text, int max_lines, char** lines, int* sp
 		else sprintf(test_line,"%s", word);
 	
 		Font_getTextSize(font, test_line, &line_width, NULL);
+		line_width += font->offset_x * 2;
 		
 		int ow = 6 + 6;
-		if (line_width<SCREEN_WIDTH-ow) {
+		if (line_width<=SCREEN_WIDTH-ow) {
 			strcpy(line, test_line);
 		}
 		else {
@@ -1453,6 +1574,99 @@ static int App_wrap(Font* font, char* text, int max_lines, char** lines, int* sp
 		lines[line_count++] = strdup(line);
 	}
 	return line_count;
+}
+static void App_trunc(Font* font, const char* text, int max_width, char* out_text) {
+	int fw = 0;
+	Font_getTextSize(font, text, &fw, NULL);
+	
+	if (fw<=max_width) {
+		strcpy(out_text, text);
+		return;
+	}
+	
+	const char* sep = "...";
+	int slen = strlen(sep);
+	int sw = 0;
+	Font_getTextSize(font, sep, &sw, NULL);
+	// width(head) + width(sep) + width(tail) != width(head + sep + tail)
+	// because it doesn't account for tracking/kerning against sep and head/tail
+	// so we have to fudge it here or out_text could be wider than max_width
+	sw += font->tracking * 2;
+	
+	fw = max_width - sw;
+	int hw = fw / 2;
+	int len = strlen(text);
+	
+	char tmp[MAX_FILE];
+	int head = 0;
+	int tail = 0;
+
+	#define WORDS_ONLY 1 // looks much better to me
+	
+	// head
+	for (int i=0; i<len; i++) {
+		if (WORDS_ONLY && i!=0 && text[i]!=' ') continue;
+		
+		memcpy(tmp, text, i);
+		tmp[i] = '\0';
+		int w = 0;
+		Font_getTextSize(font, tmp, &w, NULL);
+		if (w>hw) {
+			if (head) break; // found at least one word
+			if (w>fw) {
+				int j = i;
+				while (j>0) {
+					j -= 1;
+					memcpy(tmp,text,j);
+					tmp[j] = '\0';
+					Font_getTextSize(font, tmp, &w, NULL);
+					if (w<=fw) {
+						head = j;
+						break;
+					}
+				}
+				break;
+			}
+			// else continue searching for a word break past the halfway
+		}
+		head = i;
+	}
+	
+	// trim trailing space or dash
+	while (WORDS_ONLY && head>0 && (text[head-1]==' ' || text[head-1]=='-')) head -= 1;
+	
+	memcpy(tmp, text, head);
+	tmp[head] = '\0';
+	int w = 0;
+	Font_getTextSize(font, tmp, &w, NULL);
+
+	hw = max_width - sw - w;
+	if (hw<0) hw = 0;
+	
+	// tail
+	for (int i=1; i<len-head; i++) {
+		int start = len - i;
+		if (WORDS_ONLY && start>0 && text[start-1]!=' ') continue;
+		
+		const char* trail = text + start;
+		int w = 0;
+		Font_getTextSize(font, trail, &w, NULL);
+		if (w>hw) break;
+		tail = i;
+	}
+	
+	while (WORDS_ONLY && tail>0 && (text[len-tail]==' ' || text[len-tail]=='-')) tail -= 1;
+	
+	int i = 0;
+	memcpy(out_text+i, text, head);
+	i += head;
+	memcpy(out_text+i, sep, slen);
+	i += slen;
+	if (tail) {
+		memcpy(out_text+i, text+(len-tail), tail);
+		i += tail;
+	}
+	out_text[i] = '\0';
 }
 
 // TODO: no longer antialiased, switch to images
@@ -1489,15 +1703,15 @@ static void AA_bolt(int x, int y, SDL_Color c) {
 		{x+ 4,y+ 4, 6,2},
 		{x+ 3,y+ 6, 6,2},
 		// middle
-		{x+ 9,y+ 7,10,1},
-		{x+ 2,y+ 8,16,2},
-		{x+ 1,y+10,16,2},
-		{x+ 0,y+12,10,1},
+		{x+ 9,y+ 7,11,1},
+		{x+ 2,y+ 8,17,2},
+		{x+ 1,y+10,17,2},
+		{x+ 0,y+12,11,1},
 		// bottom right
-		{x+10,y+12, 6,2},
-		{x+ 9,y+14, 6,2},
-		{x+ 8,y+16, 6,2},
-		{x+ 7,y+18, 6,2},
+		{x+11,y+12, 6,2},
+		{x+10,y+14, 6,2},
+		{x+ 9,y+16, 6,2},
+		{x+ 8,y+18, 6,2},
 	};
 	SDL_SetRenderDrawColor(app.renderer, c.r,c.g,c.b,c.a);
 	SDL_RenderFillRects(app.renderer, rects, NUMBER_OF(rects));
@@ -1510,16 +1724,28 @@ static void AA_bat(int x, int y, int battery, SDL_Color c) {
 	if (w>0) AA_rect(x+8,y+8,w+2,12, 0, c);
 }
 
-static void App_battery(int x, int y, int battery, int is_charging, int shadowed) {
-	SDL_Color c = TRIAD_ALPHA(WHITE_TRIAD,0xff);
+static void App_battery(int battery, int is_charging, int shadowed) {
+	int x = 426;
+	int y = 2;
+	
+	SDL_Color c = LIGHT_COLOR;
 
-	if (shadowed) AA_bat(x+2,y+2, battery, TRIAD_ALPHA(BLACK_TRIAD,0xff));
+	if (shadowed) AA_bat(x+2,y+2, battery, BLACK_COLOR);
 	AA_bat(x,y, battery, c);
 
 	if (is_charging && battery<100) {
-		x -= 23;
-		y += 4;
-		AA_bolt(x+2,y+2,TRIAD_ALPHA(BLACK_TRIAD,0xff));
+		y = 6;
+		
+		char percent[8];
+		sprintf(percent, "%i%%", battery);
+		int w = 0;
+		Font_getTextSize(font24, percent, &w, NULL);
+		
+		x -= w + 4;
+		Font_shadowText(app.renderer, font24, percent, x,y, c);
+
+		x -= 24;
+		AA_bolt(x+2,y+2,BLACK_COLOR);
 		AA_bolt(x,y,c);
 	}
 }
@@ -1589,6 +1815,10 @@ static void App_menu(void) {
 		app.preview[1] = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256,192);
 	}
 	
+	if (!app.eye) {
+		app.eye = IMG_LoadTexture(app.renderer, ASSETS_PATH "/icon-eye.png");
+	}
+	
 	char* save_items[] = {
 		"SAVE",
 		"LOAD",
@@ -1604,8 +1834,11 @@ static void App_menu(void) {
 	int selected = 0;
 	int capture = 0;
 	int dirty = 1;
+	int top = 0;
+	int rows = 12;
 	int in_menu = 1;
 	SDL_Event event;
+	int mode = MODE_MENU;
 	int last_osd = app.osd;
 	while (in_menu) {
 		
@@ -1629,76 +1862,137 @@ static void App_menu(void) {
 			if (event.type==SDL_JOYBUTTONDOWN) {
 				menu_at = SDL_GetTicks();
 				
-				if (btn==JOY_UP) {
-					selected -= 1;
-					dirty = 1;
-				}
-				else if (btn==JOY_DOWN) {
-					selected += 1;
-					dirty = 1;
-				}
-				
-				if (btn==JOY_RIGHT) {
-					selected = 0;
-					current += 1;
-					if (current>=app.count) current -= app.count;
-					dirty = 1;
-				}
-				else if (btn==JOY_LEFT) {
-					selected = 0;
-					current -= 1;
-					if (current<0) current += app.count;
-					dirty = 1;
-				}
-				
-				if (btn==JOY_B) { // BACK
-					if (current!=app.current) {
-						current = app.current;
-						selected = 0;
+				if (mode==MODE_MENU) {
+					if (btn==JOY_UP) {
+						selected -= 1;
 						dirty = 1;
 					}
-					else {
-						in_menu = 0;
+					else if (btn==JOY_DOWN) {
+						selected += 1;
+						dirty = 1;
 					}
-				}
-				else if (btn==JOY_A) { // SELECT
-					if (current==app.current) {
-						if (selected==0) { // SAVE
-							App_save();
-						}
-						else if (selected==1) { // LOAD
-							App_load();
-						}
-						else if (selected==2) { // ARCHIVE
-							// buh
-						}
-						else if (selected==3) { // RESET
-							App_reset();
-						}
-						in_menu = 0;
+				
+					if (btn==JOY_RIGHT) {
+						selected = 0;
+						current = App_next(current, +1);
+						dirty = 1;
 					}
-					else {
-
-						// if (selected==1) { // BACK
-						// 	current = app.current;
-						// 	selected = 0;
-						// 	dirty = 1;
-						// }
-						if (selected==0) { // LOAD
-							App_save();
-							App_set(current);
-							Settings_save();
-							
-							drastic_audio_pause(0);
-							puts("[LOAD] resume requested");
-							loader.state = LOADER_REQUESTED;
-							loader.after = LOADER_RESUME;
-							
+					else if (btn==JOY_LEFT) {
+						selected = 0;
+						current = App_next(current, -1);
+						dirty = 1;
+					}
+				
+					if (btn==JOY_B) { // BACK
+						if (current!=app.current) {
+							current = app.current;
+							selected = 0;
+							dirty = 1;
+						}
+						else {
 							in_menu = 0;
 						}
-						else if (selected==1) { // ARCHIVE
-							// buh
+					}
+					else if (btn==JOY_A) { // SELECT
+						if (current==app.current) {
+							if (selected==0) { // SAVE
+								App_save();
+							}
+							else if (selected==1) { // LOAD
+								App_load();
+							}
+							else if (selected==2) { // ARCHIVE
+								mode = MODE_ARCHIVE;
+								selected = current;
+								dirty = 1;
+							}
+							else if (selected==3) { // RESET
+								App_reset();
+							}
+							if (mode==MODE_MENU) in_menu = 0;
 						}
+						else {
+							if (selected==0) { // LOAD
+								App_save();
+								App_set(current);
+								Settings_save();
+							
+								drastic_audio_pause(0);
+								puts("[LOAD] resume requested");
+								loader.state = LOADER_REQUESTED;
+								loader.after = LOADER_RESUME;
+							
+								in_menu = 0;
+							}
+							else if (selected==1) { // ARCHIVE
+								mode = MODE_ARCHIVE;
+								selected = current;
+								dirty = 1;
+							}
+						}
+					}
+				}
+				else if (mode==MODE_ARCHIVE) {
+					if (btn==JOY_UP) { // ROW UP
+						current -= 1;
+						if (current<0) current += app.count;
+						dirty = 1;
+					}
+					else if (btn==JOY_DOWN) { // ROW DOWN
+						current += 1;
+						if (current>=app.count) current -= app.count;
+						dirty = 1;
+					}
+					
+					if (btn==JOY_RIGHT) { // PAGE FORWARD
+						if (current==app.count-1) current = 0;
+						else {
+							current += rows;
+							if (current>=app.count) current = app.count-1;
+						}
+						dirty = 1;
+					}
+					else if (btn==JOY_LEFT) { // PAGE BACK
+						if (current==0) current = app.count-1;
+						else {
+							current -= rows;
+							if (current<0) current = 0;
+						}
+						dirty = 1;
+					}
+					
+					if (btn==JOY_A) { // TOGGLE
+						Entry* item = &app.items[current];
+						
+						char shown[MAX_FILE];
+						sprintf(shown, "%s/%s", GAMES_PATH, item->name);
+						char hidden[MAX_FILE];
+						sprintf(hidden, "%s/%s", ARCHIVE_PATH, item->name);
+						
+						char *dst,*src;
+						if (item->hidden) {
+							src = hidden;
+							dst = shown;
+						}
+						else {
+							src = shown;
+							dst = hidden;
+						}
+						
+						if (!exists(dst) && rename(src, dst)==0) {
+							item->hidden = !item->hidden;
+							dirty = 1;
+						}
+					}
+					if (btn==JOY_B) { // BACK
+						mode = MODE_MENU;
+						dirty = 1;
+						// reusing unused selected to store current
+						// upon entering archive so we can restore
+						// when existing, selected will always
+						// revert to ARCHIVE
+						current = selected;
+						selected = current==app.current ? 2 : 1;
 					}
 				}
 				
@@ -1749,8 +2043,11 @@ static void App_menu(void) {
 				count = NUMBER_OF(load_items);
 			}
 			
-			if (selected<0) selected += count;
-			selected %= count;
+			// TODO: BAD this is update logic in render block
+			if (mode==MODE_MENU) {
+				if (selected<0) selected += count;
+				selected %= count;
+			}
 			
 			// TODO: what do we display for ARCHIVE?
 			int snap = selected==3 ? SNAP_RESET : (current==app.current && selected==0 ? SNAP_CURRENT : SNAP_SAVE);
@@ -1764,6 +2061,7 @@ static void App_menu(void) {
 			App_sync(1);
 			for (int i=0; i<SCREEN_COUNT; i++) {
 				real_SDL_RenderCopy(app.renderer, app.preview[i], NULL, &app.rects[i]);
+				if (mode==MODE_ARCHIVE) break; // only draw top screen
 			}
 			
 			real_SDL_RenderCopy(app.renderer, app.overlay, NULL, NULL);
@@ -1774,11 +2072,11 @@ static void App_menu(void) {
 			int x,y,w,h;
 			
 			// battery
-			App_battery(424,6, battery,is_charging,1);
+			App_battery(battery,is_charging,1);
 			
 			// game name
 			char name[MAX_FILE];
-			App_getDisplayName(app.items[current], name);
+			App_getDisplayName(app.items[current].name, name);
 	
 			#define MAX_LINES 8
 			char* lines[MAX_LINES];
@@ -1791,37 +2089,79 @@ static void App_menu(void) {
 				free(lines[i]);
 			}
 			
-			// center in bottom "screen"
-			y = h = SCREEN_HEIGHT / 2;
+			if (mode==MODE_MENU) {
+				// center in bottom "screen"
+				y = h = SCREEN_HEIGHT / 2;
 			
-			int mw = 0;
-			for (int i=0; i<count; i++) {
-				Font_getTextSize(font24, items[i], &w, NULL);
-				if (w>mw) mw = w;
-			}
-			
-			w = 8 + mw + 8;
-			x = (SCREEN_WIDTH - w) / 2;
-			
-			int oh = ((count-1) * 40) + 36;
-			y += (h - oh) / 2;
-			h = oh;
-			oh = 40;
-			
-			AA_rect(x-8,y-8,8+w+8,8+h+8, 0, TRIAD_ALPHA(BLACK_TRIAD,0x40));
-			
-			for (int i=0; i<count; i++) {
-				Font_renderFunc renderer = Font_shadowText;
-				SDL_Color color = WHITE_COLOR;
-				
-				if (i==selected) {
-					AA_rect(x+2,y+(i*oh)+2,w,36, 0, TRIAD_ALPHA(BLACK_TRIAD,0xff));
-					AA_rect(x,y+(i*oh),w,36, 0, TRIAD_ALPHA(WHITE_TRIAD,0xff));
-					renderer = Font_renderText;
-					color = BLACK_COLOR;
+				int mw = 0;
+				for (int i=0; i<count; i++) {
+					Font_getTextSize(font24, items[i], &w, NULL);
+					if (w>mw) mw = w;
 				}
+			
+				w = 8 + mw + 8;
+				x = (SCREEN_WIDTH - w) / 2;
+			
+				int oh = ((count-1) * 40) + 36;
+				y += (h - oh) / 2;
+				h = oh;
+				oh = 40;
+			
+				AA_rect(x-8,y-8,8+w+8,8+h+8, 0, TRIAD_ALPHA(BLACK_TRIAD,0x40));
+			
+				for (int i=0; i<count; i++) {
+					Font_renderFunc renderer = Font_shadowText;
+					SDL_Color color = WHITE_COLOR;
 				
-				renderer(app.renderer, font24, items[i], x+8, y+8+(i*oh), color);
+					if (i==selected) {
+						AA_rect(x+2,y+(i*oh)+2,w,36, 0, TRIAD_ALPHA(BLACK_TRIAD,0xff));
+						AA_rect(x,y+(i*oh),w,36, 0, TRIAD_ALPHA(WHITE_TRIAD,0xff));
+						renderer = Font_renderText;
+						color = DARK_COLOR;
+					}
+				
+					renderer(app.renderer, font24, items[i], x+8, y+8+(i*oh), color);
+				}
+			}
+			else if (mode==MODE_ARCHIVE) {
+				// calculate viewport
+				if (app.count<=rows) {
+					top = 0;
+				}
+				else {
+					int max = app.count - rows;
+					int bottom = top + rows - 1;
+					if (current<top) top = current;
+					else if (current>bottom) top = current - (rows - 1);
+					if (top<0) top = 0;
+					if (top>max) top = max;
+				}
+				int end = top + rows;
+				if (end>app.count) end = app.count;
+				
+				x = 0;
+				y = (SCREEN_HEIGHT / 2) + 16;
+				h = 32;
+				
+				// draw viewport
+				for (int i=top; i<end; i++) {
+					int row = i - top;
+					int oy = y + row * h;
+					
+					Entry* item = &app.items[i];
+					SDL_Color c = item->hidden ? LIGHT_COLOR : WHITE_COLOR;
+					if (i==current) {
+						AA_rect(x,oy,SCREEN_WIDTH,h, 0, c);
+						c = BLACK_COLOR;
+					}
+					
+					char fit[MAX_FILE];
+					App_getDisplayName(item->name, name);
+					App_trunc(font18, name, 440, fit);
+					
+					real_SDL_RenderCopy(app.renderer, app.eye, &(SDL_Rect){item->hidden?24:0,0,24,24}, &(SDL_Rect){x+4,oy+4,24,24});
+					Font_renderText(app.renderer, font18, fit,	x+32,oy+9, c);
+				}
 			}
 			
 			// volume/brightness osd
@@ -1855,6 +2195,120 @@ static void App_menu(void) {
 	app.menu = 0;
 
 	SDL_Log("exit menu");
+}
+
+#define BATMON_TIMEOUT (5 * 1000) // five seconds
+static void App_batmon(void) {
+	if (!app.bg) app.bg = IMG_LoadTexture(app.renderer, ASSETS_PATH "/bg.png");
+	
+	putString(CPU_PATH "scaling_setspeed", FREQ_MENU);
+	
+	static int last_battery = 0;
+	static int was_charging = 0;
+	
+	int asleep = 0;
+	int wake = 0;
+	int input_down_at = SDL_GetTicks();
+	int dirty = 1;
+	int last_osd = app.osd;
+	while (app.batmon) {
+
+		if (osd_at+1000<SDL_GetTicks()) app.osd = OSD_NONE;
+		if (last_osd!=app.osd) {
+			last_osd = app.osd;
+			dirty = 1;
+		}
+		
+		SDL_Event event;
+		while (app.batmon && Repeater_pollEvent(&event)) {
+			int btn = event.jbutton.button;
+			
+			if (btn==JOY_L2 || btn==JOY_R2) dirty = 1;
+
+			if (btn==JOY_PLUS || btn==JOY_MINUS) dirty = 1;
+			if (btn==JOY_L1 || btn==JOY_R1) dirty = 1;
+			
+			if (Device_handleEvent(&event)) continue;			
+
+			if (event.type==SDL_KEYUP) {
+				if (event.key.keysym.scancode==SCAN_POWER) {
+					app.batmon = 0;
+					if (asleep) wake = 1;
+				}
+			}
+			else if (event.type==SDL_JOYBUTTONDOWN) {
+				input_down_at = SDL_GetTicks();
+				if (asleep) wake = 1; 
+			}
+		}
+		
+		int battery = getInt(app.bat);
+		if (battery!=last_battery) {
+			last_battery = battery;
+			dirty = 1;
+		}
+		
+		int is_charging = getInt(app.usb);
+		if (is_charging!=was_charging) {
+			was_charging = is_charging;
+			dirty = 1;
+			
+			if (!is_charging) {
+				// power off on unplug
+				unlink("/tmp/exec_loop");
+				exit(0);
+			}
+		}
+		
+		if (!wake && SDL_GetTicks()-input_down_at>=BATMON_TIMEOUT) {
+			asleep = 1;
+			raw_bri(0);
+			putInt("/sys/class/graphics/fb0/blank", 4);
+		}
+
+		if (wake) {
+			wake = 0;
+			Settings_setBrightness(settings.brightness);
+			putInt("/sys/class/graphics/fb0/blank", 0);
+			asleep = 0;
+		}
+		
+		if (!app.batmon) {
+			// blank screen before returning
+			for (int i=0; i<2; i++) {
+				SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
+				real_SDL_RenderClear(app.renderer);
+				real_SDL_RenderPresent(app.renderer);
+			}
+			break;
+		}
+			
+		if (dirty) {
+			dirty = 0;
+			
+			SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
+			real_SDL_RenderClear(app.renderer);
+			
+			real_SDL_RenderCopy(app.renderer, app.bg, NULL, NULL);
+			
+			Font_shadowText(app.renderer, font24, "Dedicated OS", 6,6, LIGHT_COLOR);
+			Font_shadowText(app.renderer, font36, is_charging ? "Charging..." : "Charged", 6,42, WHITE_COLOR);
+
+			App_battery(battery,is_charging,1);
+			
+			// volume/brightness osd
+			if (app.osd==OSD_VOLUME) App_OSD("VOLUME", settings.volume, 20);
+			else if (app.osd==OSD_BRIGHTNESS) App_OSD("BRIGHTNESS", settings.brightness, 10);
+			
+			// flip
+			real_SDL_RenderPresent(app.renderer);
+		}
+		else {
+			real_SDL_Delay(16);
+		}
+	}
+	
+	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
 }
 
 // --------------------------------------------
@@ -1953,6 +2407,7 @@ int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture  *texture, const SDL_Rect
 
 SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
 	app.renderer = real_SDL_CreateRenderer(window, index, flags);
+	if (app.batmon) App_batmon();
 	return app.renderer;
 }
 int SDL_RenderClear(SDL_Renderer* renderer) {
@@ -1991,7 +2446,7 @@ void SDL_RenderPresent(SDL_Renderer * renderer) {
 	if (!app.menu) {
 		int battery = getInt(app.bat);
 		int is_charging = getInt(app.usb);
-		if (battery<=10 && !is_charging) App_battery(424,6, battery,0,0);
+		if (battery<=10 && !is_charging) App_battery(battery,0,0);
 		
 		if (app.osd==OSD_VOLUME) App_OSD("VOLUME", settings.volume, 20);
 		else if (app.osd==OSD_BRIGHTNESS) App_OSD("BRIGHTNESS", settings.brightness, 10);
@@ -2086,12 +2541,12 @@ int puts (const char *msg) {
 __attribute__((noreturn))
 void exit(int status) {
 	App_quit();
-    real_exit(status);
+	real_exit(status);
 }
 __attribute__((noreturn))
 void _exit(int status) {
 	App_quit();
-    real__exit(status);
+	real__exit(status);
 }
 int system(const char *command) {
 	unsetenv("LD_PRELOAD");

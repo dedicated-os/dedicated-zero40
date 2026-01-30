@@ -1,4 +1,26 @@
+- nix batmon?
+	what if batmon was just a state of libhookdrastic it booted into when connected to power?
+	messy because we'd have to let drastic init SDL/window/renderer
+	but cleaner because we'd get osd + battery reading for free (mostly)
+
+- enable L stick
+
+- change ARCHIVE to HIDE or SHOW based on item->hidden?
+	- so it better matches verb-iness of other menu items
+- bump some of the font tile sizes to accomodate the /, %, and & characters
+- suddenly getting audio crackle in temple of trials in ni no kuni?! :disappointed:
+	- just had to save in-game and reset, must be the game's audio engine not liking being run for over six hours straight
+
 - implement archive
+	- reconsider design
+		- bump 16 to 24 (or maybe even a new 20?)
+		- implement Font_truncateText()
+			- get width of "..."
+			- get width of text
+			- subtract text - "..." and divide by two
+			- get front half of string within halfwidth
+			- get back half of string within halfwidth
+			- draw front "..." back
 	- entering the archive may change app.items
 		- including unloading the currently playing game
 	- archive shares half the screen rendering logic with menu
@@ -8,6 +30,8 @@
 		- rebuild app.items
 		- if current game has been archived load the next game
 		- handle no games by kicking back into archive view?
+
+- get assets into repo
 
 - update lichee patch for new boot-resource size
 	device/config/chips/a133/configs/aw3/linux/sys_partition.fex
