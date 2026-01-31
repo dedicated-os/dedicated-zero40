@@ -28,7 +28,7 @@ DEDICATED OS integer scales and crops the overscan on the MagicX Zero40. This sh
 
 This can be toggled with `G + L2`.
 
-By default screens have a gap between them.
+Screens have a gap between them by default.
 
 <img width=240 src="github/dedicated-gap.png" title=Gap /> <img width=240 src="github/dedicated-gapless.png" title=Gapless /> 
 
