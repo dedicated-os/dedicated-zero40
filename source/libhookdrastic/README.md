@@ -18,4 +18,5 @@ Kill drastic - hold MENU and press POWER
 While charging:
 
 Wake display - press any button (except POWER)
-Launch drastic - press POWER
+Launch game - press and release POWER
+Poweroff - press and hold POWER for 1 second
