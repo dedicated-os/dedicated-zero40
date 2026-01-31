@@ -4,6 +4,6 @@ endif
 
 TARGET = pp
 all:
-	$(CROSS_COMPILE)gcc $(TARGET).c -o $(TARGET)
+	$(CROSS_COMPILE)gcc $(TARGET).c -o $(TARGET).elf
 clean:
-	rm -rf $(TARGET)
+	rm -rf $(TARGET).elf
