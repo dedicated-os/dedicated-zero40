@@ -42,6 +42,9 @@
 #define SCREEN_HEIGHT 800
 #define SCREEN_COUNT 2 // duh
 
+#define DS_WIDTH 256
+#define DS_HEIGHT 192
+
 #define BLACK_TRIAD 	0x00,0x00,0x00
 #define WHITE_TRIAD 	0xff,0xff,0xff
 #define LIGHT_TRIAD 	0xbb,0xbb,0xbb
@@ -1053,8 +1056,8 @@ static void App_sync(int force) {
 		}
 	}
 	
-	app.rects[0] = (SDL_Rect){0,0,256,192};
-	app.rects[1] = (SDL_Rect){0,0,256,192};
+	app.rects[0] = (SDL_Rect){0,0,DS_WIDTH,DS_HEIGHT};
+	app.rects[1] = (SDL_Rect){0,0,DS_WIDTH,DS_HEIGHT};
 	
 	if (settings.cropped) {
 		app.rects[0].w *= 2;
@@ -1067,8 +1070,8 @@ static void App_sync(int force) {
 		app.rects[1].x -= 8 * 2;
 	}
 	else {
-		app.rects[0].w = app.rects[1].w = 480;
-		app.rects[0].h = app.rects[1].h = 360;
+		app.rects[0].w = app.rects[1].w = SCREEN_WIDTH;
+		app.rects[0].h = app.rects[1].h = SCREEN_WIDTH * 0.75;
 	}
 	
 	if (settings.spread) {
@@ -1076,7 +1079,7 @@ static void App_sync(int force) {
 	}
 	else {
 		app.rects[1].y = app.rects[0].h;
-		int oy = (SCREEN_HEIGHT - app.rects[0].h*2) / 2;
+		int oy = (SCREEN_HEIGHT - app.rects[0].h * SCREEN_COUNT) / 2;
 		app.rects[0].y += oy;
 		app.rects[1].y += oy;
 	}
@@ -1880,8 +1883,8 @@ static void App_menu(void) {
 	}
 	
 	if (!app.preview[0]) {
-		app.preview[0] = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256,192);
-		app.preview[1] = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256,192);
+		app.preview[0] = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, DS_WIDTH,DS_HEIGHT);
+		app.preview[1] = SDL_CreateTexture(app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, DS_WIDTH,DS_HEIGHT);
 	}
 	
 	if (!app.eye) {
@@ -2556,7 +2559,7 @@ void SDL_RenderPresent(SDL_Renderer * renderer) {
 SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, int w, int h) {
 	SDL_Texture *texture = real_SDL_CreateTexture(renderer, format, type, w, h);
 	if (type==SDL_TEXTUREACCESS_STREAMING) {
-		if (w==256 && h==192) {
+		if (w==DS_WIDTH && h==DS_HEIGHT) {
 			if (!app.screens[0]) app.screens[0] = texture;
 			else if (!app.screens[1]) app.screens[1] = texture;
 		}
