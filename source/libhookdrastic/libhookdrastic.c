@@ -30,6 +30,7 @@
 #define BAT_PATH 		"/sys/class/power_supply/axp2202-battery/"
 #define USB_PATH 		"/sys/class/power_supply/axp2202-usb/"
 #define CPU_PATH		"/sys/devices/system/cpu/cpu0/cpufreq/"
+#define ADB_PATH		"/sys/class/android_usb/android0/"
 
 #define FREQ_MENU		"408000"
 #define FREQ_GAME		"1800000"
@@ -1107,7 +1108,7 @@ static void App_reset(void) {
 }
 
 static int Device_OTG(void) {
-    FILE *f = fopen("/sys/class/android_usb/android0/state", "r");
+    FILE *f = fopen(ADB_PATH "state", "r");
     if (!f) return 0;
 
     char buffer[64];

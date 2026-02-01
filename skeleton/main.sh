@@ -4,10 +4,12 @@ export PATH=/mnt/SDCARD/system/bin:$PATH
 export LD_LIBRARY_PATH=/mnt/SDCARD/system/lib:$LD_LIBRARY_PATH
 
 # disable led
-pp 0x0300B034 0xC4
+led off
 
 # update bootlogo if changed
 bootlogo
+
+# loop
 
 # hold MENU and press POWER to kill drastic if it hangs
 hangmon &
@@ -26,4 +28,8 @@ sync
 
 # cleanup and quit
 killall -s term hangmon
+
+# /loop
+
+led on
 shutdown
