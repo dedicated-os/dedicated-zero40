@@ -931,7 +931,7 @@ static void __Font_drawChar(Font* font, SDL_Surface* dst, unsigned char c, int x
 	SDL_BlitSurface(font->bitmap, &(SDL_Rect){tx*tw,ty*th,tw,th}, dst, &(SDL_Rect){x,y,tw,th});
 }
 
-void __Font_drawText(Font* font, const char* text, int* out_width, int* out_height, SDL_Surface** out_surface) {
+static void __Font_drawText(Font* font, const char* text, int* out_width, int* out_height, SDL_Surface** out_surface) {
 	SDL_Surface* dst = NULL;
 	if (out_surface) {
 		int w = 0;
@@ -2113,16 +2113,17 @@ static void App_menu(void) {
 				selected %= count;
 			}
 			
-			// TODO: what do we display for ARCHIVE?
 			int snap = selected==3 ? SNAP_RESET : (current==app.current && selected==0 ? SNAP_CURRENT : SNAP_SAVE);
 			App_preview(current,0, snap);
 			App_preview(current,1, snap);
 			
-			// screens and gradient
+			App_sync(1);
+			// int dim = mode==MODE_MENU && (current==app.current ? selected==2 : selected==1);
+			
 			SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
 			real_SDL_RenderClear(app.renderer);
-	
-			App_sync(1);
+			
+			// screens and gradient
 			for (int i=0; i<SCREEN_COUNT; i++) {
 				real_SDL_RenderCopy(app.renderer, app.preview[i], NULL, &app.rects[i]);
 				if (mode==MODE_ARCHIVE) break; // only draw top screen
