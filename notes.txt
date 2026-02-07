@@ -1,3 +1,11 @@
+CHANGE LOG
+- added icon when fast-forwarding
+- added update mechanism
+- fixed stale back buffer when waking from faux sleep
+- fixed spamming faux sleep when in battery monitor mode
+
+-----------------------------------------------
+
 - updater
 	copy over system.zip (and if updating from the very first release, main.sh)
 	that's it
