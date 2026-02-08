@@ -2695,8 +2695,8 @@ int __sprintf_chk(char *s, int flag, size_t slen, const char *fmt, ...) {
 		va_end(ap);
 		
 		char path[MAX_PATH];
-		sprintf(path, MIC_PATH "/%s.wav", name);
-		if (name && exists(path)) return real__sprintf_chk(s, flag, slen, MIC_PATH "/%s.wav", name);
+		sprintf(path, MICS_PATH "/%s.wav", name);
+		if (name && exists(path)) return real__sprintf_chk(s, flag, slen, MICS_PATH "/%s.wav", name);
 	}
 
 	va_list ap;
