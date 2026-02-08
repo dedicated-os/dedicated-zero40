@@ -1,6 +1,6 @@
 CHANGE LOG
 
-- added support for per-game mic files (eg. /microphone/<rom name>.wav)
+- added support for per-game mic files (eg. /mics/<rom name>.wav)
 
 -----------------------------------------------
 

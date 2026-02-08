@@ -22,6 +22,8 @@
 
 #define SDCARD_PATH		"/mnt/SDCARD"
 #define GAMES_PATH 		SDCARD_PATH "/games"
+#define BIOS_PATH		SDCARD_PATH "/bios"
+#define MICS_PATH		SDCARD_PATH "/mics"
 #define ARCHIVE_PATH	GAMES_PATH "/archive"
 #define SYSTEM_PATH 	SDCARD_PATH "/system"
 #define ASSETS_PATH		SYSTEM_PATH "/assets"
@@ -2683,7 +2685,7 @@ int __sprintf_chk(char *s, int flag, size_t slen, const char *fmt, ...) {
 		const char* bios = va_arg(ap, const char*);	// %s
 		va_end(ap);
 		
-		if (bios && strncmp(bios, "nds_",4)==0) return real__sprintf_chk(s, flag, slen, SDCARD_PATH "/bios/%s", bios);
+		if (bios && strncmp(bios, "nds_",4)==0) return real__sprintf_chk(s, flag, slen, BIOS_PATH "/%s", bios);
 	}
 	if (fmt && strcmp(fmt, "%s%cmicrophone%c%s.wav")==0) {
 		va_list ap;
@@ -2693,8 +2695,8 @@ int __sprintf_chk(char *s, int flag, size_t slen, const char *fmt, ...) {
 		va_end(ap);
 		
 		char path[MAX_PATH];
-		sprintf(path, SDCARD_PATH "/microphone/%s.wav", name);
-		if (name && exists(path)) return real__sprintf_chk(s, flag, slen, SDCARD_PATH "/microphone/%s.wav", name);
+		sprintf(path, MIC_PATH "/%s.wav", name);
+		if (name && exists(path)) return real__sprintf_chk(s, flag, slen, MIC_PATH "/%s.wav", name);
 	}
 
 	va_list ap;
