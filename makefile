@@ -1,3 +1,5 @@
+.PHONY: build
+
 BUILD_HASH:=$(shell git rev-parse --short HEAD)
 RELEASE_TIME:=$(shell TZ=GMT date +%Y%m%d)
 RELEASE_BETA=beta-
