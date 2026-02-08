@@ -1,13 +1,9 @@
 CHANGE LOG
 
-- added comma to fonts
-- added faux lid binding (L2)
-- added faux mic binding (R2)
-- updated bootlogo shortcuts
+- added support for per-game mic files (eg. /microphone/<rom name>.wav)
 
 -----------------------------------------------
 
-- generate microphone.wav instead of packaging
 - make sure we're creating folders before they're required
 
 - figure out how rtc works (no games I play require this but the "mah pokemans!" crowd will flip)

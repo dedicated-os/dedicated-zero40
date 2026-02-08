@@ -2685,6 +2685,17 @@ int __sprintf_chk(char *s, int flag, size_t slen, const char *fmt, ...) {
 		
 		if (bios && strncmp(bios, "nds_",4)==0) return real__sprintf_chk(s, flag, slen, SDCARD_PATH "/bios/%s", bios);
 	}
+	if (fmt && strcmp(fmt, "%s%cmicrophone%c%s.wav")==0) {
+		va_list ap;
+		va_start(ap, fmt);
+		va_arg(ap, const char*); va_arg(ap, int); va_arg(ap, int); // skip %s %c %c
+		const char* name = va_arg(ap, const char*);	// %s
+		va_end(ap);
+		
+		char path[MAX_PATH];
+		sprintf(path, SDCARD_PATH "/microphone/%s.wav", name);
+		if (name && exists(path)) return real__sprintf_chk(s, flag, slen, SDCARD_PATH "/microphone/%s.wav", name);
+	}
 
 	va_list ap;
 	va_start(ap, fmt);
