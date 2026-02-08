@@ -1,13 +1,13 @@
 CHANGE LOG
 
 - added comma to fonts
+- added faux lid binding (L2)
+- added faux mic binding (R2)
+- updated bootlogo shortcuts
 
 -----------------------------------------------
 
-- updater
-	copy over system.zip (and if updating from the very first release, main.sh)
-	that's it
-	
+- generate microphone.wav instead of packaging
 - make sure we're creating folders before they're required
 
 - figure out how rtc works (no games I play require this but the "mah pokemans!" crowd will flip)
