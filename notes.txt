@@ -1,8 +1,6 @@
 CHANGE LOG
-- added icon when fast-forwarding
-- added update mechanism
-- fixed stale back buffer when waking from faux sleep
-- fixed spamming faux sleep when in battery monitor mode
+
+- added comma to fonts
 
 -----------------------------------------------
 
