@@ -24,5 +24,6 @@ sync
 # cleanup and quit
 killall -s term hangmon
 
+# reenable led and say goodnight
 led on
 shutdown

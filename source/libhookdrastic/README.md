@@ -5,6 +5,9 @@ Cancel - press B
 
 Open menu - press MENU
 
+Open/close lid - L2
+Simulate mic input - R2
+
 Toggle crop - hold MENU and press L2  
 Toggle gap - hold MENU and press R2  
 Toggle fast-forward - press L3

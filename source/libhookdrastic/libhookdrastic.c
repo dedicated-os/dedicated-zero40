@@ -37,6 +37,8 @@
 #define FREQ_MENU		"408000"
 #define FREQ_GAME		"1800000"
 
+#define AUTO_SLOT 0
+
 #define MAX_LINE 1024
 #define MAX_PATH 512
 #define MAX_FILE 256
@@ -1099,12 +1101,12 @@ static void App_sync(int force) {
 	app.synced = 1;
 }
 static void App_load(void) {
-	drastic_load_state(0);
+	drastic_load_state(AUTO_SLOT);
 }
 static void App_save(void) {
 	App_screenshot(app.current, 0, SNAP_SAVE);
 	App_screenshot(app.current, 1, SNAP_SAVE);
-	drastic_save_state(0);
+	drastic_save_state(AUTO_SLOT);
 }
 static void App_reset(void) {
 	drastic_audio_pause(0);
@@ -1136,7 +1138,7 @@ static void Device_suspend(void) {
 	
 	Settings_save();
 	
-	drastic_save_state(0);
+	drastic_save_state(AUTO_SLOT);
 	drastic_await_save();
 	drastic_audio_pause(1);
 	
@@ -2073,7 +2075,7 @@ static void App_menu(void) {
 				}
 				
 				if (btn==JOY_START) { // TODO: tmp
-					drastic_save_state(0);
+					drastic_save_state(AUTO_SLOT);
 					drastic_quit();
 					in_menu = 0;
 				}
@@ -2537,7 +2539,7 @@ void SDL_RenderPresent(SDL_Renderer * renderer) {
 				if (loader.after==LOADER_RESUME) {
 					puts("[LOAD] perform resume");
 					loader.after = LOADER_RESET;
-					drastic_load_state(0);
+					drastic_load_state(AUTO_SLOT);
 				}
 				else puts("[LOAD] perform reset");
 				Device_mute(0);
