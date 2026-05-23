@@ -4,6 +4,8 @@ CHANGE LOG
 
 -----------------------------------------------
 
+BUG: on first launch I think it may pick the first item from archive?
+
 - make sure we're creating folders before they're required
 
 - figure out how rtc works (no games I play require this but the "mah pokemans!" crowd will flip)

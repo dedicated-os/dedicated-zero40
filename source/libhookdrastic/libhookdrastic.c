@@ -1265,7 +1265,7 @@ static int Device_handleEvent(SDL_Event* event) {
 			menu_combo = 0;
 		}
 		
-		if (event->jbutton.button==JOY_SELECT) { // capture
+		if (event->jbutton.button==JOY_BACK) { // capture
 			if (menu_down) {
 				app.capture = 1;
 				menu_combo = 1;
@@ -2435,71 +2435,17 @@ void SDL_SetWindowSize(SDL_Window* window, int w, int h) {
 	// window size is always 480x800
 	// real_SDL_SetWindowSize(window, w, h); 
 }
-int SDL_PollEvent(SDL_Event* event) {
-	
-	// loop is required to capture button presses
-	while (1) {
-		int result = Repeater_pollEvent(event);
-		if (!result) return 0;
-		
-		if (Device_handleEvent(event)) continue;
-		
-		if (event->type==SDL_JOYBUTTONDOWN) {
-			if (event->jbutton.button==JOY_L3) {
-				app.fast_forward = !app.fast_forward;
-				if (app.fast_forward) Device_mute(1);
-				else Device_mute(0);
-			}
-			if (event->jbutton.button==JOY_MENU) {
-				// in_drastic_menu = !in_drastic_menu; // TODO: uncomment to enable drastic menu (hacky)
-				continue;
-			}
-		}
-		else if (event->type==SDL_JOYBUTTONUP) {
-			if (event->jbutton.button==JOY_MENU) {
-				if (!in_drastic_menu) {
-					App_menu();
-					continue;
-				}
-			}
-		}
-		
-		switch (event->type) {
-			case SDL_FINGERDOWN:
-			case SDL_FINGERUP:
-			case SDL_FINGERMOTION: {
-				// for some reason drastic isn't expecting 
-				// normalized coords so convert to window
-				int x = event->tfinger.x * SCREEN_WIDTH;
-				int y = event->tfinger.y * SCREEN_HEIGHT;
-				
-				// SDL_Log("touch (window) %i,%i (%f,%f)", x,y, event->tfinger.x,event->tfinger.y);
 
-				SDL_Rect src = app.rects[1];
-				
-				if (y<400) continue; // ignore area outside bottom screen
-				
-				if (y<src.y) y = src.y;
-				else if (y>=src.y+src.h) y = src.y+src.h-1;
-
-				static const SDL_Rect dst = { 0, 400, 480, 400 };
-
-				int dx = x - src.x;
-				int dy = y - src.y;
-				x = dst.x + ((dx * dst.w + (src.w >> 1)) / src.w);
-				y = dst.y + ((dy * dst.h + (src.h >> 1)) / src.h);
-
-				// SDL_Log("touch (adjust) %i,%i", x,y);
-				event->tfinger.x = x;
-				event->tfinger.y = y;
-			} break;
-		}
-		
-		return result;
-	}
+SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
+	app.renderer = real_SDL_CreateRenderer(window, index, flags);
+	if (app.batmon) App_batmon();
+	return app.renderer;
 }
-
 int SDL_RenderSetLogicalSize(SDL_Renderer *renderer, int w, int h) {
+	return 1; // complete render takeover
+}
+int SDL_RenderClear(SDL_Renderer* renderer) {
+	if (in_drastic_menu) return real_SDL_RenderClear(renderer);
 	return 1; // complete render takeover
 }
 int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture  *texture, const SDL_Rect *srcrect, const SDL_Rect *dstrect) {
@@ -2510,16 +2456,6 @@ int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture  *texture, const SDL_Rect
 	}
 	
 	if (in_drastic_menu) return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect);
-	return 1; // complete render takeover
-}
-
-SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
-	app.renderer = real_SDL_CreateRenderer(window, index, flags);
-	if (app.batmon) App_batmon();
-	return app.renderer;
-}
-int SDL_RenderClear(SDL_Renderer* renderer) {
-	if (in_drastic_menu) return real_SDL_RenderClear(renderer);
 	return 1; // complete render takeover
 }
 void SDL_RenderPresent(SDL_Renderer * renderer) {
@@ -2587,6 +2523,70 @@ void SDL_DestroyTexture(SDL_Texture *texture) {
 	else if (texture==app.screens[1]) app.screens[1] = NULL;
 	
 	real_SDL_DestroyTexture(texture);
+}
+
+int SDL_PollEvent(SDL_Event* event) {
+	
+	// loop is required to capture button presses
+	while (1) {
+		int result = Repeater_pollEvent(event);
+		if (!result) return 0;
+		
+		if (Device_handleEvent(event)) continue;
+		
+		if (event->type==SDL_JOYBUTTONDOWN) {
+			if (event->jbutton.button==JOY_L3) {
+				app.fast_forward = !app.fast_forward;
+				if (app.fast_forward) Device_mute(1);
+				else Device_mute(0);
+			}
+			if (event->jbutton.button==JOY_MENU) {
+				// in_drastic_menu = !in_drastic_menu; // TODO: uncomment to enable drastic menu (hacky)
+				continue;
+			}
+		}
+		else if (event->type==SDL_JOYBUTTONUP) {
+			if (event->jbutton.button==JOY_MENU) {
+				if (!in_drastic_menu) {
+					App_menu();
+					continue;
+				}
+			}
+		}
+		
+		switch (event->type) {
+			case SDL_FINGERDOWN:
+			case SDL_FINGERUP:
+			case SDL_FINGERMOTION: {
+				// for some reason drastic isn't expecting 
+				// normalized coords so convert to window
+				int x = event->tfinger.x * SCREEN_WIDTH;
+				int y = event->tfinger.y * SCREEN_HEIGHT;
+				
+				// SDL_Log("touch (window) %i,%i (%f,%f)", x,y, event->tfinger.x,event->tfinger.y);
+
+				SDL_Rect src = app.rects[1];
+				
+				if (y<400) continue; // ignore area outside bottom screen
+				
+				if (y<src.y) y = src.y;
+				else if (y>=src.y+src.h) y = src.y+src.h-1;
+
+				static const SDL_Rect dst = { 0, 400, 480, 400 };
+
+				int dx = x - src.x;
+				int dy = y - src.y;
+				x = dst.x + ((dx * dst.w + (src.w >> 1)) / src.w);
+				y = dst.y + ((dy * dst.h + (src.h >> 1)) / src.h);
+
+				// SDL_Log("touch (adjust) %i,%i", x,y);
+				event->tfinger.x = x;
+				event->tfinger.y = y;
+			} break;
+		}
+		
+		return result;
+	}
 }
 
 int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained) {
@@ -2743,8 +2743,6 @@ static void resolve_real(void) {
 	real_SDL_CreateWindow = dlsym(RTLD_NEXT, "SDL_CreateWindow");
 	real_SDL_SetWindowSize = dlsym(RTLD_NEXT, "SDL_SetWindowSize");
 	
-	real_SDL_PollEvent = dlsym(RTLD_NEXT, "SDL_PollEvent");
-	
 	real_SDL_CreateRenderer = dlsym(RTLD_NEXT, "SDL_CreateRenderer");
 	real_SDL_RenderSetLogicalSize = dlsym(RTLD_NEXT, "SDL_RenderSetLogicalSize");
 	real_SDL_RenderClear = dlsym(RTLD_NEXT, "SDL_RenderClear");
@@ -2753,6 +2751,8 @@ static void resolve_real(void) {
 	
 	real_SDL_CreateTexture = dlsym(RTLD_NEXT, "SDL_CreateTexture");
 	real_SDL_DestroyTexture = dlsym(RTLD_NEXT, "SDL_DestroyTexture");
+	
+	real_SDL_PollEvent = dlsym(RTLD_NEXT, "SDL_PollEvent");
 	
 	real_SDL_OpenAudio = dlsym(RTLD_NEXT, "SDL_OpenAudio");
 	real_SDL_Delay = dlsym(RTLD_NEXT, "SDL_Delay");
