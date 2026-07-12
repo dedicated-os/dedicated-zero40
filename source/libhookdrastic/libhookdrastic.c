@@ -789,7 +789,7 @@ typedef struct {
 
 Font* font36 = &(Font){
 	.name = "font-dedicated-36.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%, ",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 36,
 	.tile_height = 36,
 	.offset_x = -2,
@@ -804,6 +804,7 @@ Font* font36 = &(Font){
 		['-'] = 24,
 		['\''] = 6,
 		['!'] = 6,
+		[':'] = 6,
 		['&'] = 36,
 		[' '] = 12,
 	},
@@ -821,7 +822,7 @@ Font* font36 = &(Font){
 
 Font* font24 = &(Font){
 	.name = "font-dedicated-24.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%, ",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 24,
 	.tile_height = 24,
 	.offset_x = -1,
@@ -835,6 +836,7 @@ Font* font24 = &(Font){
 		['-'] = 16,
 		['\''] = 4,
 		['!'] = 4,
+		[':'] = 4,
 		[' '] = 8,
 		['%'] = 21,
 	},
@@ -850,7 +852,7 @@ Font* font24 = &(Font){
 
 Font* font18 = &(Font){
 	.name = "font-dedicated-18.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%, ",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 18,
 	.tile_height = 18,
 	.tracking = 3,
@@ -863,6 +865,7 @@ Font* font18 = &(Font){
 		['-'] = 12,
 		['\''] = 3,
 		['!'] = 3,
+		[':'] = 3,
 		[' '] = 6,
 	},
 	.kern_pairs = {
@@ -877,7 +880,7 @@ Font* font18 = &(Font){
 
 Font* font16 = &(Font){
 	.name = "font-dedicated-16.png",
-	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%, ",
+	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 16,
 	.tile_height = 16,
 	.tracking = 4,
@@ -890,6 +893,7 @@ Font* font16 = &(Font){
 		['-'] = 10,
 		['\''] = 2,
 		['!'] = 2,
+		[':'] = 2,
 		[' '] = 4,
 	},
 	.kern_pairs = {
