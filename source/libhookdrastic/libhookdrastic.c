@@ -2427,6 +2427,7 @@ static void App_menu(void) {
 			
 			if (Pad_justPressed(PAD_SELECT)) {
 				App_datetime();
+				menu_at = SDL_GetTicks(); // keep awake
 				dirty = 1;
 			}
 		
