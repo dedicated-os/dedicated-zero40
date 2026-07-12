@@ -1005,10 +1005,7 @@ static int Pad_fakeButtonEvent(SDL_Event* event, int btn, int press) {
 }
 
 static void Pad_reset(void) {
-	pad.is_pressed = PAD_NONE;
-	pad.just_pressed = PAD_NONE;
-	pad.just_released = PAD_NONE;
-	pad.just_repeated = PAD_NONE;
+	memset(&pad, 0, sizeof(pad));
 }
 static void Pad_consume(PadButton btn) {
 	// pad.is_pressed is intentionally omitted
@@ -1339,10 +1336,42 @@ static void Device_poweroff(void) {
 #define WAKE_DEFER 250 // quarter of a second
 #define POWER_TIMEOUT 1000 // one second
 static void Device_tick(void) {
+	
+	if (Pad_isPressed(PAD_MENU)) {
+		if (Pad_justRepeated(PAD_L1)) {
+			if (settings.brightness>0) {
+				Settings_setBrightness(settings.brightness-1);
+			}
+			app.osd = OSD_BRIGHTNESS;
+			osd_at = SDL_GetTicks();
+		}
+		else if (Pad_justRepeated(PAD_R1)) {
+			if (settings.brightness<10) {
+				Settings_setBrightness(settings.brightness+1);
+			}
+			app.osd = OSD_BRIGHTNESS;
+			osd_at = SDL_GetTicks();
+		}
+	}
+	
+	if (Pad_justRepeated(PAD_PLUS)) {
+		if (settings.volume<20) {
+			Settings_setVolume(settings.volume+1);
+		}
+		app.osd = OSD_VOLUME;
+		osd_at = SDL_GetTicks();
+	}
+	else if (Pad_justRepeated(PAD_MINUS)) {
+		if (settings.volume>0) {
+			Settings_setVolume(settings.volume-1);
+		}
+		app.osd = OSD_VOLUME;
+		osd_at = SDL_GetTicks();
+	}
+	
 	Pad_nextFrame();
 }
 static int Device_handleEvent(SDL_Event* event) {
-	static int menu_down = 0;
 	static int menu_combo = 0;
 	static int woken_at = 0;
 	static int power_at = 0;
@@ -1352,101 +1381,66 @@ static int Device_handleEvent(SDL_Event* event) {
 		if (power_at && SDL_GetTicks()-power_at>=POWER_TIMEOUT) {
 			Device_poweroff();
 		}
-	
-		if (event->type==SDL_KEYDOWN) {
-			if (event->key.keysym.scancode==SCAN_POWER && event->key.repeat==0) {
-				power_at = SDL_GetTicks();
-				return 1;
-			}
+		
+		if (Pad_justPressed(PAD_POWER)) {
+			power_at = SDL_GetTicks();
+			return 1;
 		}
-		else if (event->type==SDL_KEYUP) {
-			if (event->key.keysym.scancode==SCAN_POWER) {
-				power_at = 0;
-				if (SDL_GetTicks()-woken_at>WAKE_DEFER) {
-					Device_sleep();
-					woken_at = SDL_GetTicks();
-				}
-				return 1;
+		else if (Pad_justReleased(PAD_POWER)) {
+			power_at = 0;
+			if (SDL_GetTicks()-woken_at>WAKE_DEFER) {
+				Device_sleep();
+				woken_at = SDL_GetTicks();
 			}
+			return 1;
 		}
 	}
 	
-	if (event->type==SDL_JOYBUTTONDOWN) {
-		if (event->jbutton.button==JOY_MENU) {
-			menu_down = 1;
-			menu_combo = 0;
-		}
-		
-		if (event->jbutton.button==JOY_SELECT) { // capture
-			if (menu_down) {
-				app.capture = 1;
-				menu_combo = 1;
-				return 1;
-			}
-		}
-		
-		if (event->jbutton.button==JOY_L2) {
-			if (menu_down) {
-				settings.cropped = !settings.cropped;
-				App_sync(1);
-				menu_combo = 1;
-				return 1;
-			}
-		}
-		else if (event->jbutton.button==JOY_R2) {
-			if (menu_down) {
-				settings.spread = !settings.spread;
-				App_sync(1);
-				menu_combo = 1;
-				return 1;
-			}
-		}
-		
-		if (event->jbutton.button==JOY_PLUS) {
-			if (settings.volume<20) {
-				Settings_setVolume(settings.volume+1);
-			}
-			app.osd = OSD_VOLUME;
-			osd_at = SDL_GetTicks();
+	if (Pad_justPressed(PAD_MENU)) {
+		menu_combo = 0;
+	}
+	
+	if (Pad_isPressed(PAD_MENU)) {
+		if (Pad_justPressed(PAD_L2)) {
+			settings.cropped = !settings.cropped;
+			App_sync(1);
+			menu_combo = 1;
 			return 1;
 		}
-		else if (event->jbutton.button==JOY_MINUS) {
-			if (settings.volume>0) {
-				Settings_setVolume(settings.volume-1);
-			}
-			app.osd = OSD_VOLUME;
-			osd_at = SDL_GetTicks();
+		else if (Pad_justPressed(PAD_R2)) {
+			settings.spread = !settings.spread;
+			App_sync(1);
+			menu_combo = 1;
 			return 1;
 		}
 		
-		if (event->jbutton.button==JOY_R1) {
-			if (menu_down) {
-				if (settings.brightness<10) {
-					Settings_setBrightness(settings.brightness+1);
-					menu_combo = 1;
-				}
-				app.osd = OSD_BRIGHTNESS;
-				osd_at = SDL_GetTicks();
-				return 1;
-			}
+		if (Pad_justPressed(PAD_START)) { // capture
+			app.capture = 1;
+			menu_combo = 1;
+			return 1;
 		}
-		else if (event->jbutton.button==JOY_L1) {
-			if (menu_down) {
-				if (settings.brightness>0) {
-					Settings_setBrightness(settings.brightness-1);
-					menu_combo = 1;
-				}
-				app.osd = OSD_BRIGHTNESS;
-				osd_at = SDL_GetTicks();
-				return 1;
+		
+		// NOTE: moved Pad_justRepeated() to Device_tick()
+		// otherwise they only fire on press and not on repeat
+		// because Device_handleEvent() is only called when
+		// SDL fires an event
+		if (Pad_justPressed(PAD_L1)) {
+			if (settings.brightness>0) {
+				menu_combo = 1;
 			}
+			return 1;
+		}
+		else if (Pad_justPressed(PAD_R1)) {
+			if (settings.brightness<10) {
+				menu_combo = 1;
+			}
+			return 1;
 		}
 	}
-	else if (event->type==SDL_JOYBUTTONUP) {
-		if (event->jbutton.button==JOY_MENU) {
-			menu_down = 0;
-			return menu_combo;
-		}
+	
+	if (Pad_justReleased(PAD_MENU)) {
+		if (menu_combo) Pad_consume(PAD_MENU);
+		return menu_combo;
 	}
 	
 	return 0;
@@ -2044,164 +2038,167 @@ static void App_menu(void) {
 
 		while (in_menu && Pad_pollEvent(&event)) {
 			// LOG_event(&event);
-			int btn = event.jbutton.button;
-			
 			if (Device_handleEvent(&event)) {
 				dirty = 1;
 				continue;
 			}
+		}
+		
+		if (Pad_justReleased(PAD_MENU)) {
+			in_menu = 0;
+		}
+		
+		if (Pad_anyPressed()) {
+			menu_at = SDL_GetTicks(); // keep awake
+		}
+		
+		if (Pad_justPressed(PAD_START)) { // TODO: tmp
+			drastic_save_state(AUTO_SLOT);
+			drastic_quit();
+			in_menu = 0;
+		}
+		
+		if (mode==MODE_MENU) {
+			if (Pad_justPressed(PAD_UP)) {
+				selected -= 1;
+				dirty = 1;
+			}
+			else if (Pad_justPressed(PAD_DOWN)) {
+				selected += 1;
+				dirty = 1;
+			}
+		
+			if (Pad_justPressed(PAD_RIGHT)) {
+				selected = 0;
+				current = App_next(current, +1);
+				dirty = 1;
+			}
+			else if (Pad_justPressed(PAD_LEFT)) {
+				selected = 0;
+				current = App_next(current, -1);
+				dirty = 1;
+			}
 			
-			if (event.type==SDL_JOYBUTTONDOWN) {
-				menu_at = SDL_GetTicks();
-				
-				if (mode==MODE_MENU) {
-					if (btn==JOY_UP) {
-						selected -= 1;
-						dirty = 1;
-					}
-					else if (btn==JOY_DOWN) {
-						selected += 1;
-						dirty = 1;
-					}
-				
-					if (btn==JOY_RIGHT) {
-						selected = 0;
-						current = App_next(current, +1);
-						dirty = 1;
-					}
-					else if (btn==JOY_LEFT) {
-						selected = 0;
-						current = App_next(current, -1);
-						dirty = 1;
-					}
-				
-					if (btn==JOY_B) { // BACK
-						if (current!=app.current) {
-							current = app.current;
-							selected = 0;
-							dirty = 1;
-						}
-						else {
-							in_menu = 0;
-						}
-					}
-					else if (btn==JOY_A) { // SELECT
-						if (current==app.current) {
-							if (selected==0) { // SAVE
-								App_save();
-							}
-							else if (selected==1) { // LOAD
-								App_load();
-							}
-							else if (selected==2) { // ARCHIVE
-								mode = MODE_ARCHIVE;
-								selected = current;
-								dirty = 1;
-							}
-							else if (selected==3) { // RESET
-								App_reset();
-							}
-							if (mode==MODE_MENU) in_menu = 0;
-						}
-						else {
-							if (selected==0) { // LOAD
-								App_save();
-								App_set(current);
-								Settings_save();
-							
-								drastic_audio_pause(0);
-								puts("[LOAD] resume requested");
-								loader.state = LOADER_REQUESTED;
-								loader.after = LOADER_RESUME;
-							
-								in_menu = 0;
-							}
-							else if (selected==1) { // ARCHIVE
-								mode = MODE_ARCHIVE;
-								selected = current;
-								dirty = 1;
-							}
-						}
-					}
+			if (Pad_justPressed(PAD_SELECT)) {
+				App_datetime();
+				dirty = 1;
+			}
+		
+			if (Pad_justPressed(PAD_B)) { // BACK
+				if (current!=app.current) {
+					current = app.current;
+					selected = 0;
+					dirty = 1;
 				}
-				else if (mode==MODE_ARCHIVE) {
-					if (btn==JOY_UP) { // ROW UP
-						current -= 1;
-						if (current<0) current += app.count;
-						dirty = 1;
-					}
-					else if (btn==JOY_DOWN) { // ROW DOWN
-						current += 1;
-						if (current>=app.count) current -= app.count;
-						dirty = 1;
-					}
-					
-					if (btn==JOY_RIGHT) { // PAGE FORWARD
-						if (current==app.count-1) current = 0;
-						else {
-							current += rows;
-							if (current>=app.count) current = app.count-1;
-						}
-						dirty = 1;
-					}
-					else if (btn==JOY_LEFT) { // PAGE BACK
-						if (current==0) current = app.count-1;
-						else {
-							current -= rows;
-							if (current<0) current = 0;
-						}
-						dirty = 1;
-					}
-					
-					if (btn==JOY_A) { // TOGGLE
-						Entry* item = &app.items[current];
-						
-						char shown[MAX_FILE];
-						sprintf(shown, "%s/%s", GAMES_PATH, item->name);
-						char hidden[MAX_FILE];
-						sprintf(hidden, "%s/%s", ARCHIVE_PATH, item->name);
-						
-						char *dst,*src;
-						if (item->hidden) {
-							src = hidden;
-							dst = shown;
-						}
-						else {
-							src = shown;
-							dst = hidden;
-						}
-						
-						if (!exists(dst) && rename(src, dst)==0) {
-							item->hidden = !item->hidden;
-							dirty = 1;
-						}
-					}
-					if (btn==JOY_B) { // BACK
-						mode = MODE_MENU;
-						dirty = 1;
-						// reusing unused selected to store current
-						// upon entering archive so we can restore
-						// when existing, selected will always
-						// revert to ARCHIVE
-						current = selected;
-						selected = current==app.current ? 2 : 1;
-					}
-				}
-				
-				if (btn==JOY_START) { // TODO: tmp
-					drastic_save_state(AUTO_SLOT);
-					drastic_quit();
+				else {
 					in_menu = 0;
 				}
 			}
-			else if (event.type==SDL_JOYBUTTONUP) {
-				menu_at = SDL_GetTicks();
-				if (btn==JOY_MENU) {
-					in_menu = 0;
+			else if (Pad_justPressed(PAD_A)) { // SELECT
+				if (current==app.current) {
+					if (selected==0) { // SAVE
+						App_save();
+					}
+					else if (selected==1) { // LOAD
+						App_load();
+					}
+					else if (selected==2) { // ARCHIVE
+						mode = MODE_ARCHIVE;
+						selected = current;
+						dirty = 1;
+					}
+					else if (selected==3) { // RESET
+						App_reset();
+					}
+					if (mode==MODE_MENU) in_menu = 0;
+				}
+				else {
+					if (selected==0) { // LOAD
+						App_save();
+						App_set(current);
+						Settings_save();
+					
+						drastic_audio_pause(0);
+						puts("[LOAD] resume requested");
+						loader.state = LOADER_REQUESTED;
+						loader.after = LOADER_RESUME;
+					
+						in_menu = 0;
+					}
+					else if (selected==1) { // ARCHIVE
+						mode = MODE_ARCHIVE;
+						selected = current;
+						dirty = 1;
+					}
 				}
 			}
 		}
+		else if (mode==MODE_ARCHIVE) {
+			if (Pad_justRepeated(PAD_UP)) { // ROW UP
+				current -= 1;
+				if (current<0) current += app.count;
+				dirty = 1;
+			}
+			else if (Pad_justRepeated(PAD_DOWN)) { // ROW DOWN
+				current += 1;
+				if (current>=app.count) current -= app.count;
+				dirty = 1;
+			}
+			
+			if (Pad_justPressed(PAD_RIGHT)) { // PAGE FORWARD
+				if (current==app.count-1) current = 0;
+				else {
+					current += rows;
+					if (current>=app.count) current = app.count-1;
+				}
+				dirty = 1;
+			}
+			else if (Pad_justPressed(PAD_LEFT)) { // PAGE BACK
+				if (current==0) current = app.count-1;
+				else {
+					current -= rows;
+					if (current<0) current = 0;
+				}
+				dirty = 1;
+			}
+			
+			if (Pad_justPressed(PAD_A)) { // TOGGLE
+				Entry* item = &app.items[current];
+				
+				char shown[MAX_FILE];
+				sprintf(shown, "%s/%s", GAMES_PATH, item->name);
+				char hidden[MAX_FILE];
+				sprintf(hidden, "%s/%s", ARCHIVE_PATH, item->name);
+				
+				char *dst,*src;
+				if (item->hidden) {
+					src = hidden;
+					dst = shown;
+				}
+				else {
+					src = shown;
+					dst = hidden;
+				}
+				
+				if (!exists(dst) && rename(src, dst)==0) {
+					item->hidden = !item->hidden;
+					dirty = 1;
+				}
+			}
+			if (Pad_justPressed(PAD_B)) { // BACK
+				mode = MODE_MENU;
+				dirty = 1;
+				// reusing unused selected to store current
+				// upon entering archive so we can restore
+				// when existing, selected will always
+				// revert to ARCHIVE
+				current = selected;
+				selected = current==app.current ? 2 : 1;
+			}
+		}
 		
+		// TODO: should these be running every frame?
+		// TODO: need to duplicate logic in App_render()
 		int is_charging = getInt(app.usb);
 		if (is_charging!=was_charging) {
 			was_charging = is_charging;
@@ -2364,6 +2361,7 @@ static void App_menu(void) {
 			real_SDL_Delay(16);
 		}
 		
+		// TODO: this needs to be in submenus too?
 		#define MENU_TIMEOUT 30 * 1000 // thirty seconds
 		if (SDL_GetTicks()>=menu_at+MENU_TIMEOUT) {
 			if (!is_charging) {
@@ -2413,34 +2411,27 @@ static void App_batmon(void) {
 		
 		SDL_Event event;
 		while (app.batmon && Pad_pollEvent(&event)) {
-			int btn = event.jbutton.button;
-			
 			if (Device_handleEvent(&event)) {
 				dirty = 1;
 				continue;
 			}	
-
-			if (power_at && SDL_GetTicks()-power_at>=POWER_TIMEOUT) {
-				power_off = 1;
-			}
-	
-			if (event.type==SDL_KEYDOWN) {
-				if (event.key.keysym.scancode==SCAN_POWER && event.key.repeat==0) {
-					power_at = SDL_GetTicks();
-				}
-			}
-			else if (event.type==SDL_KEYUP) {
-				if (event.key.keysym.scancode==SCAN_POWER) {
-					app.batmon = 0;
-					if (asleep) wake = 1;
-				}
-			}
-			
-			// NOTE: touches don't register when the screen is off
-			if (event.type==SDL_JOYBUTTONDOWN || event.type==SDL_FINGERDOWN) {
-				input_down_at = SDL_GetTicks();
-				if (asleep) wake = 1; 
-			}
+		}
+		
+		if (power_at && SDL_GetTicks()-power_at>=POWER_TIMEOUT) {
+			power_off = 1;
+		}
+		
+		if (Pad_justPressed(PAD_POWER)) {
+			power_at = SDL_GetTicks();
+		}
+		else if (Pad_justReleased(PAD_POWER)) {
+			app.batmon = 0;
+			if (asleep) wake = 1;
+		}
+		
+		if (Pad_anyJustPressed()) {
+			input_down_at = SDL_GetTicks();
+			if (asleep) wake = 1; 
 		}
 		
 		int battery = getInt(app.bat);
@@ -2654,24 +2645,22 @@ int SDL_PollEvent(SDL_Event* event) {
 		
 		if (Device_handleEvent(event)) continue;
 		
-		if (event->type==SDL_JOYBUTTONDOWN) {
-			if (event->jbutton.button==JOY_L3) {
-				app.fast_forward = !app.fast_forward;
-				if (app.fast_forward) Device_mute(1);
-				else Device_mute(0);
-			}
-			if (event->jbutton.button==JOY_MENU) {
-				// in_drastic_menu = !in_drastic_menu; // TODO: uncomment to enable drastic menu (hacky)
+		if (Pad_justPressed(PAD_MENU)) {
+			continue;
+		}
+		
+		if (Pad_justReleased(PAD_MENU)) {
+			if (!in_drastic_menu) {
+				App_menu();
 				continue;
 			}
 		}
-		else if (event->type==SDL_JOYBUTTONUP) {
-			if (event->jbutton.button==JOY_MENU) {
-				if (!in_drastic_menu) {
-					App_menu();
-					continue;
-				}
-			}
+		
+		if (Pad_justPressed(PAD_L3)) {
+			Pad_consume(PAD_L3);
+			app.fast_forward = !app.fast_forward;
+			if (app.fast_forward) Device_mute(1);
+			else Device_mute(0);
 		}
 		
 		switch (event->type) {
