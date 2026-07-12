@@ -8,6 +8,7 @@
 #include <setjmp.h>
 #include <dirent.h>
 #include <sys/ioctl.h>
+#include <time.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1335,7 +1336,8 @@ static void Device_poweroff(void) {
 #define SLEEP_TIMEOUT (2 * 60 * 1000) // two minutes
 #define WAKE_DEFER 250 // quarter of a second
 #define POWER_TIMEOUT 1000 // one second
-static void Device_tick(void) {
+static int Device_tick(void) {
+	int dirty = 0;
 	
 	if (Pad_isPressed(PAD_MENU)) {
 		if (Pad_justRepeated(PAD_L1)) {
@@ -1344,6 +1346,7 @@ static void Device_tick(void) {
 			}
 			app.osd = OSD_BRIGHTNESS;
 			osd_at = SDL_GetTicks();
+			dirty = 1;
 		}
 		else if (Pad_justRepeated(PAD_R1)) {
 			if (settings.brightness<10) {
@@ -1351,6 +1354,7 @@ static void Device_tick(void) {
 			}
 			app.osd = OSD_BRIGHTNESS;
 			osd_at = SDL_GetTicks();
+			dirty = 1;
 		}
 	}
 	
@@ -1360,6 +1364,7 @@ static void Device_tick(void) {
 		}
 		app.osd = OSD_VOLUME;
 		osd_at = SDL_GetTicks();
+		dirty = 1;
 	}
 	else if (Pad_justRepeated(PAD_MINUS)) {
 		if (settings.volume>0) {
@@ -1367,9 +1372,11 @@ static void Device_tick(void) {
 		}
 		app.osd = OSD_VOLUME;
 		osd_at = SDL_GetTicks();
+		dirty = 1;
 	}
 	
 	Pad_nextFrame();
+	return dirty;
 }
 static int Device_handleEvent(SDL_Event* event) {
 	static int menu_combo = 0;
@@ -1481,223 +1488,6 @@ static void App_getDisplayName(const char* in_name, char* out_name) {
 	tmp = out_name + strlen(out_name) - 1;
 	while(tmp>out_name && isspace((unsigned char)*tmp)) tmp--;
 	tmp[1] = '\0';
-}
-static int App_sort(const void* a, const void* b) {
-	const Entry *i = (const Entry *)a;
-	const Entry *j = (const Entry *)b;
-	return compareNatural(i->name, j->name);
-}
-
-static void App_empty(void) {
-	SDL_Init(SDL_INIT_VIDEO);
-	SDL_CreateWindow(NULL,0,0,SCREEN_WIDTH,SCREEN_HEIGHT,SDL_WINDOW_SHOWN);
-	SDL_CreateRenderer(app.window, -1, SDL_RENDERER_ACCELERATED);
-	
-	if (!app.bg) app.bg = IMG_LoadTexture(app.renderer, ASSETS_PATH "/bg.png");
-	
-	real_SDL_RenderCopy(app.renderer, app.bg, NULL, NULL);
-
-	Font_shadowText(app.renderer, font24, "Dedicated OS",	6, 6, LIGHT_COLOR);
-	Font_shadowText(app.renderer, font36, "No games found", 6, 42, WHITE_COLOR);
-	
-	real_SDL_RenderPresent(app.renderer);
-	
-	sleep(5);
-	unlink("/tmp/exec_loop");
-	App_quit();
-}
-static void App_set(int i) {
-	if (!app.count) App_empty();
-	
-	if (i>=app.count) i -= app.count;
-	if (i<0) i += app.count;
-	app.current = i;
-	
-	Entry* item = &app.items[app.current];
-	strcpy(settings.game, item->name);
-	
-	static char game_path[MAX_PATH];
-	sprintf(game_path, "%s/%s", item->hidden ? ARCHIVE_PATH : GAMES_PATH, settings.game);
-	strcpy(app.game_path, game_path);
-	
-	strcpy(app.game_name, settings.game);
-	char *dot = strrchr(app.game_name, '.');
-	if (dot && dot!=app.game_name) *dot = '\0';
-	
-	SDL_Log("settings.game: %s", settings.game);
-	SDL_Log("app.game_path: %s", app.game_path);
-	SDL_Log("app.game_name: %s", app.game_name);
-}
-
-static void App_screenshot(int game, int screen, int snap) {
-	if (!app.screens[screen]) return;
-	SDL_Texture* texture = app.screens[screen];
-	
-	char game_name[MAX_FILE];
-	if (snap==SNAP_CURRENT) strcpy(game_name, "current");
-	else strcpy(game_name, app.items[game].name);
-	char *dot = strrchr(game_name, '.');
-	if (dot && dot!=game_name) *dot = '\0';
-	
-	char path[MAX_PATH];
-	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
-	// SDL_Log("screenshot: %s", path);
-	
-	void *pixels = NULL;
-	int pitch = 0;
-
-	int w,h,access;
-	Uint32 fmt;
-	SDL_QueryTexture(texture, &fmt, &access, &w, &h);
-	SDL_LockTexture(texture, NULL, &pixels, &pitch);
-
-	const int depth = SDL_BITSPERPIXEL(fmt);
-	SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom(pixels, w, h, depth, pitch, fmt);
-	if (surface) {
-		SDL_SaveBMP(surface, path);
-		SDL_FreeSurface(surface);
-	}
-
-	SDL_UnlockTexture(texture);
-}
-static void App_preview(int game, int screen, int snap) {
-	if (!app.preview[screen]) return;
-	SDL_Texture* texture = app.preview[screen];
-	
-	char game_name[MAX_FILE];
-	if (snap==SNAP_CURRENT) strcpy(game_name, "current");
-	else strcpy(game_name, app.items[game].name);
-	char *dot = strrchr(game_name, '.');
-	if (dot && dot!=game_name) *dot = '\0';
-	
-	char path[MAX_PATH];
-	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
-	if (snap==SNAP_RESET || !exists(path)) sprintf(path, ASSETS_PATH "/screenshot-%i.png", screen);
-
-	SDL_Log("preview: %s (snap: %i)", path, snap);
-	SDL_Surface* tmp = IMG_Load(path);
-
-	int w, h;
-	Uint32 format;
-	SDL_QueryTexture(texture, &format, NULL, &w, &h);
-
-	if (format==tmp->format->format) {
-		SDL_UpdateTexture(texture, NULL, tmp->pixels, tmp->pitch);
-	} else {
-		void *dst;
-		int dst_pitch;
-		if (SDL_LockTexture(texture, NULL, &dst, &dst_pitch)==0) {
-			SDL_ConvertPixels(w, h, tmp->format->format, tmp->pixels, tmp->pitch, format, dst, dst_pitch);
-			SDL_UnlockTexture(texture);
-		}
-	}
-	
-	SDL_FreeSurface(tmp);
-}
-static  int App_capture(const char* path) {
-	app.capture = 0;
-	SDL_Surface *tmp = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_WIDTH, SCREEN_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
-	SDL_RenderReadPixels(app.renderer, NULL, SDL_PIXELFORMAT_ARGB8888, tmp->pixels, tmp->pitch);
-	SDL_SaveBMP(tmp, path);
-	SDL_FreeSurface(tmp);
-}
-
-static void App_init(void) {
-	Settings_load();
-	
-	putString(CPU_PATH "scaling_governor", "userspace");
-	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
-	
-	char* dirs[] = {
-		GAMES_PATH,
-		ARCHIVE_PATH,
-	};
-	
-	app.count = 0;
-	app.current = 0;
-	app.capacity = 16;
-	app.items = malloc(sizeof(Entry) * app.capacity);
-
-	Fonts_init();
-	
-	// get games
-	for (int i=0; i<NUMBER_OF(dirs); i++) {
-		DIR* dir = opendir(dirs[i]);
-		if (dir) {
-			struct dirent* entry;
-			while ((entry=readdir(dir))!=NULL) {
-				if (entry->d_name[0]=='.') continue;
-				if (entry->d_type==DT_DIR) continue;
-			
-				if (app.count>=app.capacity) {
-					app.capacity *= 2;
-					app.items = realloc(app.items, sizeof(Entry) * app.capacity);
-				}
-				Entry* item = &app.items[app.count++];
-				item->hidden = i;
-				snprintf(item->name, MAX_FILE, "%s", entry->d_name);
-			}
-			closedir(dir);
-		}
-	}
-	
-	if (app.count) qsort(app.items, app.count, sizeof(Entry), App_sort);
-	
-	// get index of last played game
-	if (*settings.game) {
-		for (int i=0; i<app.count; i++) {
-			if (strcmp(app.items[i].name, settings.game)==0) {
-				app.current = i;
-				break;
-			}
-		}
-	}
-	
-	App_set(app.current);
-	
-	app.bat = open(BAT_PATH "capacity", O_RDONLY);
-	app.usb = open(USB_PATH "online", O_RDONLY);
-	app.batmon = getInt(app.usb) && !Device_OTG();
-}
-static void App_quit(void) {
-	SDL_Log("App_quit");
-	
-	free(app.items);
-	
-	if (app.bg) SDL_DestroyTexture(app.bg);
-	if (app.icons) SDL_DestroyTexture(app.icons);
-	if (app.overlay) SDL_DestroyTexture(app.overlay);
-	if (app.preview[0]) SDL_DestroyTexture(app.preview[0]);
-	if (app.preview[1]) SDL_DestroyTexture(app.preview[1]);
-	
-	close(app.bat);
-	close(app.usb);
-	
-	Fonts_quit();
-	
-	Settings_save();
-}
-static int App_next(int start, int dir) {
-	int i = start;
-	int count = app.count;
-	for (int _=0; _<count; _++) {
-		i += dir;
-		if (i>=count) i -= count;
-		else if (i<0) i += count;
-		if (!app.items[i].hidden || i==app.current) return i;
-	}
-	return start;
-}
-static void App_render(void) {
-	if (!app.renderer) return;
-	SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
-	real_SDL_RenderClear(app.renderer);
-	
-	if (!app.screens[0] || !app.screens[1]) return;
-	App_sync(0);
-	for (int i=0; i<SCREEN_COUNT; i++) {
-		real_SDL_RenderCopy(app.renderer, app.screens[i], NULL, &app.rects[i]);
-	}
 }
 static int App_wrap(Font* font, char* text, int max_lines, char** lines, int* splits) {
 	int line_count = 0;
@@ -1854,6 +1644,126 @@ static void App_trunc(Font* font, const char* text, int max_width, char* out_tex
 	out_text[i] = '\0';
 }
 
+static void App_empty(void) {
+	SDL_Init(SDL_INIT_VIDEO);
+	SDL_CreateWindow(NULL,0,0,SCREEN_WIDTH,SCREEN_HEIGHT,SDL_WINDOW_SHOWN);
+	SDL_CreateRenderer(app.window, -1, SDL_RENDERER_ACCELERATED);
+	
+	if (!app.bg) app.bg = IMG_LoadTexture(app.renderer, ASSETS_PATH "/bg.png");
+	
+	real_SDL_RenderCopy(app.renderer, app.bg, NULL, NULL);
+
+	Font_shadowText(app.renderer, font24, "Dedicated OS",	6, 6, LIGHT_COLOR);
+	Font_shadowText(app.renderer, font36, "No games found", 6, 42, WHITE_COLOR);
+	
+	real_SDL_RenderPresent(app.renderer);
+	
+	sleep(5);
+	unlink("/tmp/exec_loop");
+	App_quit();
+}
+
+static int App_sort(const void* a, const void* b) {
+	const Entry *i = (const Entry *)a;
+	const Entry *j = (const Entry *)b;
+	return compareNatural(i->name, j->name);
+}
+static void App_set(int i) {
+	if (!app.count) App_empty();
+	
+	if (i>=app.count) i -= app.count;
+	if (i<0) i += app.count;
+	app.current = i;
+	
+	Entry* item = &app.items[app.current];
+	strcpy(settings.game, item->name);
+	
+	static char game_path[MAX_PATH];
+	sprintf(game_path, "%s/%s", item->hidden ? ARCHIVE_PATH : GAMES_PATH, settings.game);
+	strcpy(app.game_path, game_path);
+	
+	strcpy(app.game_name, settings.game);
+	char *dot = strrchr(app.game_name, '.');
+	if (dot && dot!=app.game_name) *dot = '\0';
+	
+	SDL_Log("settings.game: %s", settings.game);
+	SDL_Log("app.game_path: %s", app.game_path);
+	SDL_Log("app.game_name: %s", app.game_name);
+}
+
+static void App_screenshot(int game, int screen, int snap) {
+	if (!app.screens[screen]) return;
+	SDL_Texture* texture = app.screens[screen];
+	
+	char game_name[MAX_FILE];
+	if (snap==SNAP_CURRENT) strcpy(game_name, "current");
+	else strcpy(game_name, app.items[game].name);
+	char *dot = strrchr(game_name, '.');
+	if (dot && dot!=game_name) *dot = '\0';
+	
+	char path[MAX_PATH];
+	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
+	// SDL_Log("screenshot: %s", path);
+	
+	void *pixels = NULL;
+	int pitch = 0;
+
+	int w,h,access;
+	Uint32 fmt;
+	SDL_QueryTexture(texture, &fmt, &access, &w, &h);
+	SDL_LockTexture(texture, NULL, &pixels, &pitch);
+
+	const int depth = SDL_BITSPERPIXEL(fmt);
+	SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom(pixels, w, h, depth, pitch, fmt);
+	if (surface) {
+		SDL_SaveBMP(surface, path);
+		SDL_FreeSurface(surface);
+	}
+
+	SDL_UnlockTexture(texture);
+}
+static void App_preview(int game, int screen, int snap) {
+	if (!app.preview[screen]) return;
+	SDL_Texture* texture = app.preview[screen];
+	
+	char game_name[MAX_FILE];
+	if (snap==SNAP_CURRENT) strcpy(game_name, "current");
+	else strcpy(game_name, app.items[game].name);
+	char *dot = strrchr(game_name, '.');
+	if (dot && dot!=game_name) *dot = '\0';
+	
+	char path[MAX_PATH];
+	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
+	if (snap==SNAP_RESET || !exists(path)) sprintf(path, ASSETS_PATH "/screenshot-%i.png", screen);
+
+	SDL_Log("preview: %s (snap: %i)", path, snap);
+	SDL_Surface* tmp = IMG_Load(path);
+
+	int w, h;
+	Uint32 format;
+	SDL_QueryTexture(texture, &format, NULL, &w, &h);
+
+	if (format==tmp->format->format) {
+		SDL_UpdateTexture(texture, NULL, tmp->pixels, tmp->pitch);
+	} else {
+		void *dst;
+		int dst_pitch;
+		if (SDL_LockTexture(texture, NULL, &dst, &dst_pitch)==0) {
+			SDL_ConvertPixels(w, h, tmp->format->format, tmp->pixels, tmp->pitch, format, dst, dst_pitch);
+			SDL_UnlockTexture(texture);
+		}
+	}
+	
+	SDL_FreeSurface(tmp);
+}
+static  int App_capture(const char* path) {
+	app.capture = 0;
+	SDL_Surface *tmp = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_WIDTH, SCREEN_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
+	SDL_RenderReadPixels(app.renderer, NULL, SDL_PIXELFORMAT_ARGB8888, tmp->pixels, tmp->pitch);
+	SDL_SaveBMP(tmp, path);
+	SDL_FreeSurface(tmp);
+}
+
 // TODO: no longer antialiased, switch to images
 static void AA_rect(int x, int y, int w, int h, int s, SDL_Color c) {
 	if (s==0) {
@@ -1962,6 +1872,433 @@ static void App_OSD(char* label, int value, int max) {
 		if (i<value) {
 			AA_rect(nx+i*no,ny,nw,nh, 0, WHITE_COLOR);
 		}
+	}
+}
+
+// --------------------------------------------
+
+typedef struct {
+	int year;
+	int month;
+	int day;
+	int hour;
+	int minute;
+	int second;
+	int ampm;
+} DateTime;
+
+static DateTime DateTime_get(void) {
+	time_t t = time(NULL);
+	struct tm tm = *localtime(&t);
+	return (DateTime){
+		.year = tm.tm_year + 1900,
+		.month = tm.tm_mon + 1,
+		.day = tm.tm_mday,
+		.hour = tm.tm_hour,
+		.minute = tm.tm_min,
+		.second = tm.tm_sec,
+		.ampm = tm.tm_hour >= 12,
+	};
+}
+static void DateTime_set(DateTime *dt) {
+	char cmd[512];
+	sprintf(cmd, "date -s '%d-%d-%d %d:%d:%d'; hwclock -w", dt->year, dt->month, dt->day, dt->hour, dt->minute, dt->second);
+	system(cmd);
+}
+
+static int days_in_month(int year, int month) {
+	static const uint8_t days[] = {
+		31, 28, 31, 30, 31, 30,
+		31, 31, 30, 31, 30, 31
+	};
+
+	if (month == 2) {
+		int leap = (year % 4 == 0 && year % 100 != 0) ||
+		           (year % 400 == 0);
+		return 28 + leap;
+	}
+
+	return days[month - 1];
+}
+
+enum {
+	FIELD_YEAR = 0,
+	FIELD_MONTH,
+	FIELD_DAY,
+	FIELD_HOUR,
+	FIELD_MINUTE,
+	// FIELD_SECOND,
+	FIELD_AMPM,
+};
+
+static void App_datetime(void) {
+	int datetime = 1;
+	int dirty = 1;
+	SDL_Event event;
+	
+	static int last_battery = 0;
+	static int was_charging = 0;
+	int current = app.current;
+	
+	DateTime dt = DateTime_get();
+	int columns[] = {
+		dt.year,
+		dt.month,
+		dt.day,
+		dt.hour,
+		dt.minute,
+		// dt.second,
+		dt.ampm,
+	};
+	char separators[] = {
+		'/',
+		'/',
+		' ',
+		':',
+		// ':',
+		0,
+		0,
+	};
+	int count = NUMBER_OF(columns);
+	
+	int w = 8;
+	for (int i=0; i<count; i++) {
+		// column
+		if (i==FIELD_YEAR) w += 20 * 4 + 4 * 3;
+		else w += 20 * 2 + 4 * 1;
+		w += 8;
+		
+		// separator
+		if (i==FIELD_AMPM) break;
+		
+		int sep = separators[i];
+			 if (sep==':') w += 4;
+		else if (sep==' ') w += 12;
+		else if (sep=='/') w += 20;
+		w += 8;
+	}
+	int h = 8 + 20 + 8;
+	int x = (SCREEN_WIDTH - w) / 2;
+	int y = (SCREEN_HEIGHT / 2) + ((SCREEN_HEIGHT / 2) - h) / 2;
+	
+	int selected = FIELD_DAY;
+	while (datetime) {
+		while (datetime && Pad_pollEvent(&event)) {
+			if (Device_handleEvent(&event)) {
+				dirty = 1;
+				continue;
+			}
+		}
+		
+		if (Pad_justPressed(PAD_B)) {
+			datetime = 0;
+			break;
+		}
+		
+		if (Pad_justRepeated(PAD_LEFT)) {
+			dirty = 1;
+			selected -= 1;
+			if (selected<0) selected += count;
+		}
+		else if (Pad_justRepeated(PAD_RIGHT)) {
+			dirty = 1;
+			selected += 1;
+			if (selected>=count) selected -= count;
+		}
+		
+		int validate = 0;
+		if (Pad_justRepeated(PAD_UP)) {
+			dirty = 1;
+			columns[selected] += 1;
+			if (selected==FIELD_AMPM) columns[FIELD_HOUR] += 12;
+			validate = 1;
+		}
+		else if (Pad_justRepeated(PAD_DOWN)) {
+			dirty = 1;
+			columns[selected] -= 1;
+			if (selected==FIELD_AMPM) columns[FIELD_HOUR] -= 12;
+			validate = 1;
+		}
+		
+		if (validate) {
+			int year	= columns[FIELD_YEAR];
+			int month	= columns[FIELD_MONTH];
+			int day		= columns[FIELD_DAY];
+			int hour	= columns[FIELD_HOUR];
+			int minute	= columns[FIELD_MINUTE];
+			// int second	= columns[FIELD_SECOND];
+			int ampm	= columns[FIELD_AMPM];
+			
+			if (year < 1970) year = 1970;
+			else if (year > 2100) year = 2100;
+
+			if (month < 1) month = 12;
+			else if (month > 12) month = 1;
+
+			int max_day = days_in_month(year, month);
+
+			if (day < 1) day = max_day;
+			else if (day > max_day) day = 1;
+
+			if (hour < 0) hour += 24;
+			else if (hour >= 24) hour -= 24;
+			
+			ampm = hour >= 12;
+
+			if (minute < 0) minute = 59;
+			else if (minute > 59) minute = 0;
+
+			// if (second < 0) second = 59;
+			// else if (second > 59) second = 0;
+			
+			columns[FIELD_YEAR]		= year;
+			columns[FIELD_MONTH]	= month;
+			columns[FIELD_DAY]		= day;
+			columns[FIELD_HOUR]		= hour;
+			columns[FIELD_MINUTE]	= minute;
+			// columns[FIELD_SECOND]	= second;
+			columns[FIELD_AMPM]		= ampm;
+
+			dt.year = year;
+			dt.month = month;
+			dt.day = day;
+			dt.hour = hour;
+			dt.minute = minute;
+			// dt.second = second;
+			dt.ampm = ampm;
+		}
+		
+		if (Pad_justPressed(PAD_A)) {
+			DateTime_set(&dt);
+			datetime = 0;
+			break;
+		}
+		
+		// TODO: should these be running every frame?
+		// TODO: need to duplicate logic in App_render()
+		int is_charging = getInt(app.usb);
+		if (is_charging!=was_charging) {
+			was_charging = is_charging;
+			dirty = 1;
+		}
+		
+		int battery = getInt(app.bat);
+		if (battery!=last_battery) {
+			last_battery = battery;
+			dirty = 1;
+		}
+		
+		if (dirty) {
+			dirty = 0;
+			
+			App_sync(1);
+			
+			SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
+			real_SDL_RenderClear(app.renderer);
+			
+			// screens and gradient
+			for (int i=0; i<SCREEN_COUNT; i++) {
+				real_SDL_RenderCopy(app.renderer, app.preview[i], NULL, &app.rects[i]);
+			}
+			
+			real_SDL_RenderCopy(app.renderer, app.overlay, NULL, NULL);
+			
+			// battery
+			App_battery(battery,is_charging,1);
+			
+			// system
+			Font_shadowText(app.renderer, font24, "Nintendo DS", 6,6, LIGHT_COLOR);
+			
+			// game name
+			char name[MAX_FILE];
+			App_getDisplayName(app.items[current].name, name);
+	
+			#define MAX_LINES 8
+			char* lines[MAX_LINES];
+			int splits[MAX_LINES] = {0};
+			int line_count = App_wrap(font36, name, MAX_LINES, lines, splits);
+			SDL_Color color = WHITE_COLOR;
+			for (int i=0; i<line_count; i++) {
+				if (splits[i]) color = LIGHT_COLOR;
+				Font_shadowText(app.renderer, font36, lines[i], 6, 42+(i*36), color);
+				free(lines[i]);
+			}
+			
+			memset(lines, 0, sizeof(lines));
+			lines[0] = "Save in-game then";
+			lines[1] = "reset to apply";
+			line_count = 2;
+			for (int i=0; i<line_count; i++) {
+				int ow;
+				Font_getTextSize(font18, lines[i], &ow, NULL);
+				Font_shadowText(app.renderer, font18, lines[i], (SCREEN_WIDTH-ow)/2, y + 8 + h + (i * 18), WHITE_COLOR);
+			}
+			
+			AA_rect(x,y,w,h, 0, TRIAD_ALPHA(BLACK_TRIAD,0x40));
+			int ox = x + 8;
+			int oy = y + 8;
+			for (int j=0; j<count; j++) {
+				Font_renderFunc font_renderer = Font_shadowText;
+				SDL_Color color = WHITE_COLOR;
+				
+				if (j==selected) {
+					int ow = 20 * 2 + 4 * 1;
+					if (j==FIELD_YEAR) ow = 20 * 4 + 4 * 3;
+					ow += 8;
+					AA_rect(ox-2,oy-2, ow,28, 0, TRIAD_ALPHA(BLACK_TRIAD,0xff));
+					AA_rect(ox-4,oy-4, ow,28, 0, TRIAD_ALPHA(WHITE_TRIAD,0xff));
+					font_renderer = Font_renderText;
+					color = DARK_COLOR;
+				}
+				
+				char *format = "%02i";
+				if (j==FIELD_YEAR) format = "%04i";
+				
+				int value = columns[j];
+				if (j==FIELD_HOUR) {
+					if (value==0) value = 12;
+					if (value>12) value -= 12;
+				}
+				
+				char tmp[8];
+				if (j==FIELD_AMPM) sprintf(tmp, "%s", value ? "PM" : "AM");
+				else sprintf(tmp, format, value);
+				
+				int len = strlen(tmp);
+				for (int k=0; k<len; k++) {
+					char c[2];
+					sprintf(c, "%c", tmp[k]);
+					int ow;
+					Font_getTextSize(font24, c, &ow, NULL);
+					font_renderer(app.renderer, font24, c, ox+(20-ow)/2,oy, color);
+					ox += 20;
+					ox += 4;
+				}
+				
+				if (j==FIELD_AMPM) break;
+				
+				ox += 4;
+				value = separators[j];
+				if (value) {
+					sprintf(tmp, "%c", value);
+					Font_shadowText(app.renderer, font24, tmp, ox,oy, WHITE_COLOR);
+				}
+					 if (value==':') ox += 4;
+				else if (value==' ') ox += 12;
+				else if (value=='/') ox += 20;
+				ox += 8;
+			}
+			
+			if (app.capture) App_capture("/tmp/capture.bmp");
+			real_SDL_RenderPresent(app.renderer);
+		}
+		else {
+			real_SDL_Delay(16);
+		}
+		
+		if (Device_tick()) dirty = 1;
+	}
+	Pad_reset();
+}
+
+// --------------------------------------------
+
+
+static void App_init(void) {
+	Settings_load();
+	
+	putString(CPU_PATH "scaling_governor", "userspace");
+	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
+	
+	char* dirs[] = {
+		GAMES_PATH,
+		ARCHIVE_PATH,
+	};
+	
+	app.count = 0;
+	app.current = 0;
+	app.capacity = 16;
+	app.items = malloc(sizeof(Entry) * app.capacity);
+
+	Fonts_init();
+	
+	// get games
+	for (int i=0; i<NUMBER_OF(dirs); i++) {
+		DIR* dir = opendir(dirs[i]);
+		if (dir) {
+			struct dirent* entry;
+			while ((entry=readdir(dir))!=NULL) {
+				if (entry->d_name[0]=='.') continue;
+				if (entry->d_type==DT_DIR) continue;
+			
+				if (app.count>=app.capacity) {
+					app.capacity *= 2;
+					app.items = realloc(app.items, sizeof(Entry) * app.capacity);
+				}
+				Entry* item = &app.items[app.count++];
+				item->hidden = i;
+				snprintf(item->name, MAX_FILE, "%s", entry->d_name);
+			}
+			closedir(dir);
+		}
+	}
+	
+	if (app.count) qsort(app.items, app.count, sizeof(Entry), App_sort);
+	
+	// get index of last played game
+	if (*settings.game) {
+		for (int i=0; i<app.count; i++) {
+			if (strcmp(app.items[i].name, settings.game)==0) {
+				app.current = i;
+				break;
+			}
+		}
+	}
+	
+	App_set(app.current);
+	
+	app.bat = open(BAT_PATH "capacity", O_RDONLY);
+	app.usb = open(USB_PATH "online", O_RDONLY);
+	app.batmon = getInt(app.usb) && !Device_OTG();
+}
+static void App_quit(void) {
+	SDL_Log("App_quit");
+	
+	free(app.items);
+	
+	if (app.bg) SDL_DestroyTexture(app.bg);
+	if (app.icons) SDL_DestroyTexture(app.icons);
+	if (app.overlay) SDL_DestroyTexture(app.overlay);
+	if (app.preview[0]) SDL_DestroyTexture(app.preview[0]);
+	if (app.preview[1]) SDL_DestroyTexture(app.preview[1]);
+	
+	close(app.bat);
+	close(app.usb);
+	
+	Fonts_quit();
+	
+	Settings_save();
+}
+static int App_next(int start, int dir) {
+	int i = start;
+	int count = app.count;
+	for (int _=0; _<count; _++) {
+		i += dir;
+		if (i>=count) i -= count;
+		else if (i<0) i += count;
+		if (!app.items[i].hidden || i==app.current) return i;
+	}
+	return start;
+}
+static void App_render(void) {
+	if (!app.renderer) return;
+	SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
+	real_SDL_RenderClear(app.renderer);
+	
+	if (!app.screens[0] || !app.screens[1]) return;
+	App_sync(0);
+	for (int i=0; i<SCREEN_COUNT; i++) {
+		real_SDL_RenderCopy(app.renderer, app.screens[i], NULL, &app.rects[i]);
 	}
 }
 
@@ -2371,7 +2708,7 @@ static void App_menu(void) {
 			menu_at = SDL_GetTicks();
 		}
 		
-		Device_tick();
+		if (Device_tick()) dirty = 1;
 	}
 	
 	Pad_reset();
