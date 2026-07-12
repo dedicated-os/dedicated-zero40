@@ -640,129 +640,6 @@ static int compareNatural(const char *a, const char *b) {
 }
 
 // --------------------------------------------
-// button repeater
-// --------------------------------------------
-
-#define REPEAT_TIMEOUT	300
-#define REPEAT_INTERVAL 100
-
-static int Repeater_fakeButtonEvent(SDL_Event* event, int btn, int press) {
-	SDL_memset(event, 0, sizeof(*event));
-	event->type = event->jbutton.type = press ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
-	event->jbutton.which  = 0;
-	event->jbutton.button = btn;
-	event->jbutton.state  = press ? SDL_PRESSED : SDL_RELEASED;
-	event->jbutton.timestamp = SDL_GetTicks();
-	return 1;
-}
-static int Repeater_pollEvent(SDL_Event* event) {
-	static int menu_down = 0;
-	static int plus_next = 0;
-	static int minus_next = 0;
-	static int r1_next = 0;
-	static int l1_next = 0;
-	
-	// analog to dpad
-	static int ax = 0;
-	static int ay = 0;
-	static int dpad_up = 0;
-	static int dpad_down = 0;
-	static int dpad_left = 0;
-	static int dpad_right = 0;
-	
-	int result = 0;
-	
-	int now = SDL_GetTicks();
-	if (plus_next && now>=plus_next) {
-		result = Repeater_fakeButtonEvent(event, JOY_PLUS, 1);
-		plus_next += REPEAT_INTERVAL;
-	}
-	else if (minus_next && now>=minus_next) {
-		result = Repeater_fakeButtonEvent(event, JOY_MINUS, 1);
-		minus_next += REPEAT_INTERVAL;
-	}
-	else if (menu_down && r1_next && now>=r1_next) {
-		result = Repeater_fakeButtonEvent(event, JOY_R1, 1);
-		r1_next += REPEAT_INTERVAL;
-	}
-	else if (menu_down && l1_next && now>=l1_next) {
-		result = Repeater_fakeButtonEvent(event, JOY_L1, 1);
-		l1_next += REPEAT_INTERVAL;
-	}
-	else {
-		result = real_SDL_PollEvent(event);
-	}
-
-	if (!result) return 0;
-	
-	if (event->type==SDL_JOYBUTTONDOWN) {
-		int now = SDL_GetTicks();
-
-		if (event->jbutton.button==JOY_MENU)					menu_down = 1;
-		if (!plus_next && event->jbutton.button==JOY_PLUS)		plus_next = now + REPEAT_TIMEOUT;
-		if (!minus_next && event->jbutton.button==JOY_MINUS)	minus_next = now + REPEAT_TIMEOUT;
-		if (!r1_next && event->jbutton.button==JOY_R1)			r1_next = now + REPEAT_TIMEOUT;
-		if (!l1_next && event->jbutton.button==JOY_L1)			l1_next = now + REPEAT_TIMEOUT;
-	}
-	else if (event->type==SDL_JOYBUTTONUP) {
-		if (event->jbutton.button==JOY_MENU) 	menu_down = 0;
-		if (event->jbutton.button==JOY_PLUS) 	plus_next = 0;
-		if (event->jbutton.button==JOY_MINUS)	minus_next = 0;
-		if (event->jbutton.button==JOY_R1)		r1_next = 0;
-		if (event->jbutton.button==JOY_L1)		l1_next = 0;
-	}
-	else if (event->type==SDL_JOYAXISMOTION) {
-		int lx = ax;
-		int ly = ay;
-		
-		if (event->jaxis.axis==AXIS_X) ax = event->jaxis.value * -1; // inverted!
-		else ay = event->jaxis.value;
-		
-		#define DEADZONE 12000
-		if (ax!=lx) {
-			if (ax>DEADZONE) {
-				if (dpad_left) Repeater_fakeButtonEvent(event, JOY_LEFT, 0);
-				if (!dpad_right) Repeater_fakeButtonEvent(event, JOY_RIGHT, 1);
-				dpad_left = 0;
-				dpad_right = 1;
-			}
-			else if (ax<-DEADZONE) {
-				if (dpad_right) Repeater_fakeButtonEvent(event, JOY_RIGHT, 0);
-				if (!dpad_left) Repeater_fakeButtonEvent(event, JOY_LEFT, 1);
-				dpad_right = 0;
-				dpad_left = 1;
-			}
-			else {
-				if (dpad_left) Repeater_fakeButtonEvent(event, JOY_LEFT, 0);
-				if (dpad_right) Repeater_fakeButtonEvent(event, JOY_RIGHT, 0);
-				dpad_left = dpad_right = 0;
-			}
-		}
-		if (ay!=ly) {
-			if (ay>DEADZONE) {
-				if (dpad_up) Repeater_fakeButtonEvent(event, JOY_UP, 0);
-				if (!dpad_down) Repeater_fakeButtonEvent(event, JOY_DOWN, 1);
-				dpad_up = 0;
-				dpad_down = 1;
-			}
-			else if (ay<-DEADZONE) {
-				if (dpad_down) Repeater_fakeButtonEvent(event, JOY_DOWN, 0);
-				if (!dpad_up) Repeater_fakeButtonEvent(event, JOY_UP, 1);
-				dpad_down = 0;
-				dpad_up = 1;
-			}
-			else {
-				if (dpad_up) Repeater_fakeButtonEvent(event, JOY_UP, 0);
-				if (dpad_down) Repeater_fakeButtonEvent(event, JOY_DOWN, 0);
-				dpad_up = dpad_down = 0;
-			}
-		}
-	}
-	
-	return result;
-}
-
-// --------------------------------------------
 // custom fonts
 // --------------------------------------------
 
@@ -1037,6 +914,234 @@ void Fonts_quit(void) {
 }
 
 // --------------------------------------------
+// input abstraction
+// --------------------------------------------
+
+#define PAD_REPEAT_TIMEOUT	300
+#define PAD_REPEAT_INTERVAL 100
+#define PAD_DEADZONE 12000
+
+typedef enum {
+	PAD_ID_NONE = -1,
+	
+	PAD_ID_UP,
+	PAD_ID_DOWN,
+	PAD_ID_LEFT,
+	PAD_ID_RIGHT,
+	
+	PAD_ID_A,
+	PAD_ID_B,
+	PAD_ID_X,
+	PAD_ID_Y,
+	
+	PAD_ID_START,
+	PAD_ID_SELECT,
+	
+	PAD_ID_L1,
+	PAD_ID_R1,
+	PAD_ID_L2,
+	PAD_ID_R2,
+	PAD_ID_L3,
+	
+	PAD_ID_MENU,
+	PAD_ID_PLUS,
+	PAD_ID_MINUS,
+	PAD_ID_POWER,
+	
+	PAD_ID_COUNT,
+} PadButtonId;
+typedef enum {
+	PAD_NONE 		= 0,
+	PAD_UP			= 1u << PAD_ID_UP,
+	PAD_DOWN		= 1u << PAD_ID_DOWN,
+	PAD_LEFT		= 1u << PAD_ID_LEFT,
+	PAD_RIGHT		= 1u << PAD_ID_RIGHT,
+	
+	PAD_A			= 1u << PAD_ID_A,
+	PAD_B			= 1u << PAD_ID_B,
+	PAD_X			= 1u << PAD_ID_X,
+	PAD_Y			= 1u << PAD_ID_Y,
+	
+	PAD_START		= 1u << PAD_ID_START,
+	PAD_SELECT		= 1u << PAD_ID_SELECT,
+	
+	PAD_L1			= 1u << PAD_ID_L1,
+	PAD_R1			= 1u << PAD_ID_R1,
+	PAD_L2			= 1u << PAD_ID_L2,
+	PAD_R2			= 1u << PAD_ID_R2,
+	PAD_L3			= 1u << PAD_ID_L3,
+	
+	PAD_MENU		= 1u << PAD_ID_MENU,
+	PAD_PLUS		= 1u << PAD_ID_PLUS,
+	PAD_MINUS		= 1u << PAD_ID_MINUS,
+	PAD_POWER		= 1u << PAD_ID_POWER,
+} PadButton;
+
+static struct {
+	uint32_t is_pressed;
+	uint32_t just_pressed;
+	uint32_t just_released;
+	uint32_t just_repeated;
+	uint32_t repeat_at[PAD_ID_COUNT];
+} pad;
+
+int Pad_anyJustPressed(void)	{ return pad.just_pressed!=PAD_NONE; }
+int Pad_anyPressed(void)		{ return pad.is_pressed!=PAD_NONE; }
+int Pad_anyJustReleased(void)	{ return pad.just_released!=PAD_NONE; }
+
+int Pad_justPressed(PadButton btn)	{ return pad.just_pressed & btn; }
+int Pad_isPressed(PadButton btn)	{ return pad.is_pressed & btn; }
+int Pad_justReleased(PadButton btn)	{ return pad.just_released & btn; }
+int Pad_justRepeated(PadButton btn)	{ return pad.just_repeated & btn; }
+
+static int Pad_fakeButtonEvent(SDL_Event* event, int btn, int press) {
+	SDL_memset(event, 0, sizeof(*event));
+	event->type = event->jbutton.type = press ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
+	event->jbutton.which  = 0;
+	event->jbutton.button = btn;
+	event->jbutton.state  = press ? SDL_PRESSED : SDL_RELEASED;
+	event->jbutton.timestamp = SDL_GetTicks();
+	return 1;
+}
+
+static void Pad_reset(void) {
+	pad.is_pressed = PAD_NONE;
+	pad.just_pressed = PAD_NONE;
+	pad.just_released = PAD_NONE;
+	pad.just_repeated = PAD_NONE;
+}
+static void Pad_consume(PadButton btn) {
+	// pad.is_pressed is intentionally omitted
+	pad.just_pressed  &= ~btn;
+	pad.just_released &= ~btn;
+	pad.just_repeated &= ~btn;
+}
+static int Pad_nextFrame(void) {
+	pad.just_pressed  = PAD_NONE;
+	pad.just_released = PAD_NONE;
+	pad.just_repeated = PAD_NONE;
+	
+	uint32_t tick = SDL_GetTicks();
+	for (int i=0; i<PAD_ID_COUNT; i++) {
+		uint32_t mask = 1 << i;
+		if ((pad.is_pressed & mask) && (tick>=pad.repeat_at[i])) {
+			pad.just_repeated |= mask;
+			pad.repeat_at[i] += PAD_REPEAT_INTERVAL;
+		}
+	}
+}
+
+static int Pad_pollEvent(SDL_Event* event) {
+	// analog to dpad
+	static int ax = 0;
+	static int ay = 0;
+	static int dpad_up = 0;
+	static int dpad_down = 0;
+	static int dpad_left = 0;
+	static int dpad_right = 0;
+	
+	int result = real_SDL_PollEvent(event);
+	if (!result) return result;
+	
+	// dupe left stick to dpad
+	if (event->type==SDL_JOYAXISMOTION) {
+		int lx = ax;
+		int ly = ay;
+	
+		if (event->jaxis.axis==AXIS_X) ax = event->jaxis.value * -1; // inverted!
+		else ay = event->jaxis.value;
+	
+		if (ax!=lx) {
+			if (ax>PAD_DEADZONE) {
+				if (dpad_left) Pad_fakeButtonEvent(event, JOY_LEFT, 0);
+				if (!dpad_right) Pad_fakeButtonEvent(event, JOY_RIGHT, 1);
+				dpad_left = 0;
+				dpad_right = 1;
+			}
+			else if (ax<-PAD_DEADZONE) {
+				if (dpad_right) Pad_fakeButtonEvent(event, JOY_RIGHT, 0);
+				if (!dpad_left) Pad_fakeButtonEvent(event, JOY_LEFT, 1);
+				dpad_right = 0;
+				dpad_left = 1;
+			}
+			else {
+				if (dpad_left) Pad_fakeButtonEvent(event, JOY_LEFT, 0);
+				if (dpad_right) Pad_fakeButtonEvent(event, JOY_RIGHT, 0);
+				dpad_left = dpad_right = 0;
+			}
+		}
+		if (ay!=ly) {
+			if (ay>PAD_DEADZONE) {
+				if (dpad_up) Pad_fakeButtonEvent(event, JOY_UP, 0);
+				if (!dpad_down) Pad_fakeButtonEvent(event, JOY_DOWN, 1);
+				dpad_up = 0;
+				dpad_down = 1;
+			}
+			else if (ay<-PAD_DEADZONE) {
+				if (dpad_down) Pad_fakeButtonEvent(event, JOY_DOWN, 0);
+				if (!dpad_up) Pad_fakeButtonEvent(event, JOY_UP, 1);
+				dpad_down = 0;
+				dpad_up = 1;
+			}
+			else {
+				if (dpad_up) Pad_fakeButtonEvent(event, JOY_UP, 0);
+				if (dpad_down) Pad_fakeButtonEvent(event, JOY_DOWN, 0);
+				dpad_up = dpad_down = 0;
+			}
+		}
+	}
+	
+	uint32_t tick = SDL_GetTicks();
+	int pressed = 0;
+	PadButtonId id = PAD_ID_NONE;
+	
+	if (event->type==SDL_KEYDOWN || event->type==SDL_KEYUP) {
+		uint8_t scan = event->key.keysym.scancode;
+		pressed = event->type==SDL_KEYDOWN;
+		if (scan==SCAN_POWER) id = PAD_ID_POWER;
+	}
+	else if (event->type==SDL_JOYBUTTONDOWN || event->type==SDL_JOYBUTTONUP) {
+		uint8_t joy = event->jbutton.button;
+		pressed = event->type==SDL_JOYBUTTONDOWN;
+			 if (joy==JOY_UP)		id = PAD_ID_UP;
+		else if (joy==JOY_DOWN)		id = PAD_ID_DOWN;
+		else if (joy==JOY_LEFT)		id = PAD_ID_LEFT;
+		else if (joy==JOY_RIGHT)	id = PAD_ID_RIGHT;
+		else if (joy==JOY_X)		id = PAD_ID_X;
+		else if (joy==JOY_B)		id = PAD_ID_B;
+		else if (joy==JOY_Y)		id = PAD_ID_Y;
+		else if (joy==JOY_A)		id = PAD_ID_A;
+		else if (joy==JOY_START)	id = PAD_ID_START;
+		else if (joy==JOY_SELECT)	id = PAD_ID_SELECT;
+		else if (joy==JOY_MENU)		id = PAD_ID_MENU;
+		else if (joy==JOY_L1)		id = PAD_ID_L1;
+		else if (joy==JOY_R1)		id = PAD_ID_R1;
+		else if (joy==JOY_L2)		id = PAD_ID_L2;
+		else if (joy==JOY_R2)		id = PAD_ID_R2;
+		else if (joy==JOY_L3)		id = PAD_ID_L3;
+		else if (joy==JOY_PLUS)		id = PAD_ID_PLUS;
+		else if (joy==JOY_MINUS)	id = PAD_ID_MINUS;
+	}
+	
+	if (id==PAD_ID_NONE) return result;
+	
+	uint32_t mask = 1u << id;
+	if (!pressed) {
+		pad.is_pressed		&= ~mask; // unset
+		pad.just_repeated	&= ~mask; // unset
+		pad.just_released	|= mask;  // set
+	}
+	else if ((pad.is_pressed & mask)==PAD_NONE) {
+		pad.just_pressed	|= mask; // set
+		pad.just_repeated	|= mask; // set
+		pad.is_pressed		|= mask; // set
+		pad.repeat_at[id]	= tick + PAD_REPEAT_TIMEOUT;
+	}
+	
+	return result;
+}
+
+// --------------------------------------------
 // custom menu
 // --------------------------------------------
 
@@ -1233,6 +1338,9 @@ static void Device_poweroff(void) {
 #define SLEEP_TIMEOUT (2 * 60 * 1000) // two minutes
 #define WAKE_DEFER 250 // quarter of a second
 #define POWER_TIMEOUT 1000 // one second
+static void Device_tick(void) {
+	Pad_nextFrame();
+}
 static int Device_handleEvent(SDL_Event* event) {
 	static int menu_down = 0;
 	static int menu_combo = 0;
@@ -1915,6 +2023,8 @@ static void App_menu(void) {
 		"ARCHIVE",
 	};
 	
+	Pad_reset();
+	
 	int menu_at = SDL_GetTicks();
 	int selected = 0;
 	int dirty = 1;
@@ -1932,7 +2042,7 @@ static void App_menu(void) {
 			dirty = 1;
 		}
 
-		while (in_menu && Repeater_pollEvent(&event)) {
+		while (in_menu && Pad_pollEvent(&event)) {
 			// LOG_event(&event);
 			int btn = event.jbutton.button;
 			
@@ -2262,7 +2372,11 @@ static void App_menu(void) {
 			}
 			menu_at = SDL_GetTicks();
 		}
+		
+		Device_tick();
 	}
+	
+	Pad_reset();
 	
 	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
 	if (!app.fast_forward && loader.state==LOADER_IDLE) Device_mute(0);
@@ -2298,7 +2412,7 @@ static void App_batmon(void) {
 		}
 		
 		SDL_Event event;
-		while (app.batmon && Repeater_pollEvent(&event)) {
+		while (app.batmon && Pad_pollEvent(&event)) {
 			int btn = event.jbutton.button;
 			
 			if (Device_handleEvent(&event)) {
@@ -2510,6 +2624,8 @@ void SDL_RenderPresent(SDL_Renderer * renderer) {
 	if (app.capture) App_capture("/tmp/capture.bmp");
 
 	if (osd_at+1000<SDL_GetTicks()) app.osd = OSD_NONE;
+	
+	Device_tick();
 }
 
 SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, int w, int h) {
@@ -2533,7 +2649,7 @@ int SDL_PollEvent(SDL_Event* event) {
 	
 	// loop is required to capture button presses
 	while (1) {
-		int result = Repeater_pollEvent(event);
+		int result = Pad_pollEvent(event);
 		if (!result) return 0;
 		
 		if (Device_handleEvent(event)) continue;
