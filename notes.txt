@@ -1,33 +1,13 @@
 CHANGE LOG
 
-- added support for per-game mic files (eg. /mics/<rom name>.wav)
+- added DATETIME view (press SELECT in menu)
+- improved sleep/wake time
 
 -----------------------------------------------
 
 BUG: on first launch I think it may pick the first item from archive?
 
 - make sure we're creating folders before they're required
-
-- don't drastic_await_save before sleep
-	not necessary slows sleep/wake
-- figure out how rtc works (no games I play require this but the "mah pokemans!" crowd will flip)
-	I hit it first with "mah pins" in TWEWY
-		copy App_datetime + Pad_* from dedicated-rgds
-	drastic appears to use the system time
-		Clubhouse Games shows current time
-		what happens if I change it while it's running?
-			nothing
-			need to reset the game to pick up new datetime
-	device RTC
-		read
-			date
-			hwclock
-		write
-			date -s "2026-01-31 12:30:00"
-			hwclock -w
-
-- expose setting time?
-	SELECT in menu?
 
 - can I differentiate between DC and OTG ports
 	DC auto-powers on, that should enter batmon
