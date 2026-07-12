@@ -1269,7 +1269,7 @@ static int Device_handleEvent(SDL_Event* event) {
 			menu_combo = 0;
 		}
 		
-		if (event->jbutton.button==JOY_BACK) { // capture
+		if (event->jbutton.button==JOY_SELECT) { // capture
 			if (menu_down) {
 				app.capture = 1;
 				menu_combo = 1;
