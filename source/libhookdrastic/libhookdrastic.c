@@ -1690,6 +1690,17 @@ static void App_set(int i) {
 	SDL_Log("app.game_path: %s", app.game_path);
 	SDL_Log("app.game_name: %s", app.game_name);
 }
+static int App_next(int start, int dir) {
+	int i = start;
+	int count = app.count;
+	for (int _=0; _<count; _++) {
+		i += dir;
+		if (i>=count) i -= count;
+		else if (i<0) i += count;
+		if (!app.items[i].hidden || i==app.current) return i;
+	}
+	return start;
+}
 
 static void App_screenshot(int game, int screen, int snap) {
 	if (!app.screens[screen]) return;
@@ -2124,6 +2135,9 @@ static void App_datetime(void) {
 				free(lines[i]);
 			}
 			
+			SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0x80);
+			SDL_RenderFillRect(app.renderer, &(SDL_Rect){0,SCREEN_HEIGHT/2,SCREEN_WIDTH,SCREEN_HEIGHT/2});
+			
 			memset(lines, 0, sizeof(lines));
 			lines[0] = "Save in-game then";
 			lines[1] = "reset to apply";
@@ -2131,7 +2145,7 @@ static void App_datetime(void) {
 			for (int i=0; i<line_count; i++) {
 				int ow;
 				Font_getTextSize(font18, lines[i], &ow, NULL);
-				Font_shadowText(app.renderer, font18, lines[i], (SCREEN_WIDTH-ow)/2, y + 8 + h + (i * 18), WHITE_COLOR);
+				Font_shadowText(app.renderer, font18, lines[i], (SCREEN_WIDTH-ow)/2, y + 8 + h + (i * 18), LIGHT_COLOR);
 			}
 			
 			AA_rect(x,y,w,h, 0, TRIAD_ALPHA(BLACK_TRIAD,0x40));
@@ -2255,6 +2269,12 @@ static void App_init(void) {
 		}
 	}
 	
+	// if there is no current and the first game is hidden
+	if (app.count>0 && app.items[app.current].hidden) {
+		// try to find a non-hidden game
+		app.current = App_next(app.current, 1);
+	}
+	
 	App_set(app.current);
 	
 	app.bat = open(BAT_PATH "capacity", O_RDONLY);
@@ -2278,17 +2298,6 @@ static void App_quit(void) {
 	Fonts_quit();
 	
 	Settings_save();
-}
-static int App_next(int start, int dir) {
-	int i = start;
-	int count = app.count;
-	for (int _=0; _<count; _++) {
-		i += dir;
-		if (i>=count) i -= count;
-		else if (i<0) i += count;
-		if (!app.items[i].hidden || i==app.current) return i;
-	}
-	return start;
 }
 static void App_render(void) {
 	if (!app.renderer) return;
@@ -2859,7 +2868,11 @@ static void App_batmon(void) {
 		else {
 			real_SDL_Delay(16);
 		}
+		
+		if (Device_tick()) dirty = 1;
 	}
+
+	Pad_reset();
 	
 	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
 	SDL_Log("exit batmon");
