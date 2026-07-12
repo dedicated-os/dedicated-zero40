@@ -1157,7 +1157,7 @@ static void Device_sleep(void) {
 	
 	drastic_audio_pause(1);
 	App_save();
-	drastic_await_save();
+	// drastic_await_save();
 
 	#define POWEROFF_TIMEOUT 2 * 60 * 1000 // two minutes
 	int slept_at = SDL_GetTicks();
