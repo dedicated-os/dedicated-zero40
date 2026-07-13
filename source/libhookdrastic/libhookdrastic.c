@@ -1232,6 +1232,15 @@ static void App_reset(void) {
 	loader.after = LOADER_RESET;
 }
 
+// --------------------------------------------
+// device features
+// --------------------------------------------
+#define AWAKE_TIMEOUT (30 * 1000) // thirty seconds
+#define SLEEP_TIMEOUT (2 * 60 * 1000) // two minutes
+#define WAKE_DEFER 250 // quarter of a second
+#define POWER_TIMEOUT 1000 // one second
+static int awake_at = 0;
+static int power_at = 0;
 static int Device_OTG(void) {
     FILE *f = fopen(ADB_PATH "state", "r");
     if (!f) return 0;
@@ -1305,12 +1314,36 @@ static void Device_sleep(void) {
 	
 	drastic_audio_pause(0);
 	
-	Settings_setVolume(settings.volume);
-	Settings_setBrightness(settings.brightness);
 	putInt("/sys/class/graphics/fb0/blank", 0);
 	Device_setLED(0);
+	Settings_setVolume(settings.volume);
+	Settings_setBrightness(settings.brightness);
+	
+	Pad_reset();
+}
+static void Device_poke(void) {
+	awake_at = SDL_GetTicks();
+}
+static int Device_autosleep(void) {
+	int dirty = 0;
+	
+	if (Pad_anyPressed() || Pad_anyJustPressed() || Pad_anyJustReleased()) {
+		Device_poke();
+		return dirty;
+	}
+	
+	if (SDL_GetTicks() >= awake_at+AWAKE_TIMEOUT) {
+		int is_charging = getInt(app.usb);
+		if (!is_charging) {
+			Device_sleep();
+			dirty = 1; // force redraw on wake
+		}
+		Device_poke();
+	}
+	return dirty;
 }
 static void Device_goodbye(void) {
+	// TODO: this is more an App thing than a device thing...
 	if (!app.bg) app.bg = IMG_LoadTexture(app.renderer, ASSETS_PATH "/bg.png");
 	real_SDL_RenderCopy(app.renderer, app.bg, NULL, NULL);
 	
@@ -1343,9 +1376,6 @@ static void Device_poweroff(void) {
 	Device_setLED(1);
 	drastic_quit();
 }
-#define SLEEP_TIMEOUT (2 * 60 * 1000) // two minutes
-#define WAKE_DEFER 250 // quarter of a second
-#define POWER_TIMEOUT 1000 // one second
 static int Device_tick(void) {
 	int dirty = 0;
 	
@@ -2002,6 +2032,9 @@ static void App_datetime(void) {
 	int x = (SCREEN_WIDTH - w) / 2;
 	int y = (SCREEN_HEIGHT / 2) + ((SCREEN_HEIGHT / 2) - h) / 2;
 	
+	Pad_reset();
+	Device_poke();
+	
 	int selected = FIELD_DAY;
 	while (datetime) {
 		while (datetime && Pad_pollEvent(&event)) {
@@ -2108,6 +2141,9 @@ static void App_datetime(void) {
 			last_battery = battery;
 			dirty = 1;
 		}
+
+		if (Device_autosleep()) dirty = 1;
+		if (Device_tick()) dirty = 1;
 		
 		if (dirty) {
 			dirty = 0;
@@ -2219,8 +2255,6 @@ static void App_datetime(void) {
 		else {
 			real_SDL_Delay(16);
 		}
-		
-		if (Device_tick()) dirty = 1;
 	}
 	Pad_reset();
 }
@@ -2374,8 +2408,8 @@ static void App_menu(void) {
 	};
 	
 	Pad_reset();
+	Device_poke();
 	
-	int menu_at = SDL_GetTicks();
 	int selected = 0;
 	int dirty = 1;
 	int top = 0;
@@ -2402,10 +2436,6 @@ static void App_menu(void) {
 		
 		if (Pad_justReleased(PAD_MENU)) {
 			in_menu = 0;
-		}
-		
-		if (Pad_anyPressed()) {
-			menu_at = SDL_GetTicks(); // keep awake
 		}
 		
 		if (Pad_justPressed(PAD_START)) { // TODO: tmp
@@ -2437,7 +2467,6 @@ static void App_menu(void) {
 			
 			if (Pad_justPressed(PAD_SELECT)) {
 				App_datetime();
-				menu_at = SDL_GetTicks(); // keep awake
 				dirty = 1;
 			}
 		
@@ -2568,7 +2597,10 @@ static void App_menu(void) {
 			dirty = 1;
 		}
 		
-		// let the hook position them (for now)
+		if (Device_autosleep()) dirty = 1;
+		if (Device_tick()) dirty = 1;
+		
+		// render
 		if (dirty) {
 			dirty = 0;
 			
@@ -2718,20 +2750,7 @@ static void App_menu(void) {
 		else {
 			real_SDL_Delay(16);
 		}
-		
-		// TODO: this needs to be in submenus too?
-		#define MENU_TIMEOUT 30 * 1000 // thirty seconds
-		if (SDL_GetTicks()>=menu_at+MENU_TIMEOUT) {
-			if (!is_charging) {
-				Device_sleep();
-				dirty = 1;
-			}
-			menu_at = SDL_GetTicks();
-		}
-		
-		if (Device_tick()) dirty = 1;
 	}
-	
 	Pad_reset();
 	
 	putString(CPU_PATH "scaling_setspeed", FREQ_GAME);
