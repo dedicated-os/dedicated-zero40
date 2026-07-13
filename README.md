@@ -11,6 +11,7 @@ That's it. You can [grab the latest version here](https://github.com/dedicated-o
 ## Features
 
 - no options
+- datetime switcher
 - single save state
 - fast game switcher
 - drastic for emulation
@@ -33,3 +34,9 @@ Screens have a gap between them by default.
 <img width=240 src="github/dedicated-gap.png" title=Gap /> <img width=240 src="github/dedicated-gapless.png" title=Gapless /> 
 
 This can be toggled with `G + R2`.
+
+Pressing `SELECT` in the menu brings up the datetime switcher.
+
+<img width=240 src="github/dedicated-datetime.png" title=Datetime /> 
+
+After changing the datetime you must save in-game then reset from the menu for the game to notice the change.
