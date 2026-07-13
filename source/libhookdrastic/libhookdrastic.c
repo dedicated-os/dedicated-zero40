@@ -996,14 +996,14 @@ static struct {
 	uint32_t repeat_at[PAD_ID_COUNT];
 } pad;
 
-int Pad_anyJustPressed(void)	{ return pad.just_pressed!=PAD_NONE; }
-int Pad_anyPressed(void)		{ return pad.is_pressed!=PAD_NONE; }
-int Pad_anyJustReleased(void)	{ return pad.just_released!=PAD_NONE; }
+static inline int Pad_anyJustPressed(void)	{ return pad.just_pressed!=PAD_NONE; }
+static inline int Pad_anyPressed(void)		{ return pad.is_pressed!=PAD_NONE; }
+static inline int Pad_anyJustReleased(void)	{ return pad.just_released!=PAD_NONE; }
 
-int Pad_justPressed(PadButton btn)	{ return pad.just_pressed & btn; }
-int Pad_isPressed(PadButton btn)	{ return pad.is_pressed & btn; }
-int Pad_justReleased(PadButton btn)	{ return pad.just_released & btn; }
-int Pad_justRepeated(PadButton btn)	{ return pad.just_repeated & btn; }
+static inline int Pad_justPressed(PadButton btn)	{ return pad.just_pressed & btn; }
+static inline int Pad_isPressed(PadButton btn)	{ return pad.is_pressed & btn; }
+static inline int Pad_justReleased(PadButton btn)	{ return pad.just_released & btn; }
+static inline int Pad_justRepeated(PadButton btn)	{ return pad.just_repeated & btn; }
 
 static int Pad_fakeButtonEvent(SDL_Event* event, int btn, int press) {
 	SDL_memset(event, 0, sizeof(*event));
