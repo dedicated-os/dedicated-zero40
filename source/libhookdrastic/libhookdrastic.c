@@ -670,7 +670,7 @@ Font* font36 = &(Font){
 	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 36,
 	.tile_height = 36,
-	.offset_x = -2,
+	.offset_x = -3,
 	.tracking = 6,
 	.char_width = 30,
 	.low_width = 24,
@@ -691,6 +691,8 @@ Font* font36 = &(Font){
 		['T']['A'] = -6,
 		['A']['V'] = -6,
 		['V']['A'] = -6,
+		['A']['W'] = -3,
+		['W']['A'] = -3,
 		['A']['Y'] = -6,
 		['Y']['A'] = -6,
 		['T']['-'] = -6,
@@ -703,7 +705,7 @@ Font* font24 = &(Font){
 	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 24,
 	.tile_height = 24,
-	.offset_x = -1,
+	.offset_x = -2,
 	.tracking = 4,
 	.char_width = 20,
 	.char_widths = {
@@ -723,6 +725,8 @@ Font* font24 = &(Font){
 		['T']['A'] = -4,
 		['A']['V'] = -4,
 		['V']['A'] = -4,
+		['A']['W'] = -2,
+		['W']['A'] = -2,
 		['T']['-'] = -4,
 		['-']['T'] = -4,
 	},
@@ -733,6 +737,7 @@ Font* font18 = &(Font){
 	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 18,
 	.tile_height = 18,
+	.offset_x = -1,
 	.tracking = 3,
 	.char_width = 15,
 	.char_widths = {
@@ -751,6 +756,8 @@ Font* font18 = &(Font){
 		['T']['A'] = -3,
 		['A']['V'] = -3,
 		['V']['A'] = -3,
+		['A']['W'] = -1,
+		['W']['A'] = -1,
 		['T']['-'] = -3,
 		['-']['T'] = -3,
 	},
@@ -761,6 +768,7 @@ Font* font16 = &(Font){
 	.charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-'!?&0123456789/$+%,: ",
 	.tile_width = 16,
 	.tile_height = 16,
+	.offset_x = -1,
 	.tracking = 4,
 	.char_width = 12,
 	.char_widths = {
@@ -779,6 +787,8 @@ Font* font16 = &(Font){
 		['T']['A'] = -2,
 		['A']['V'] = -2,
 		['V']['A'] = -2,
+		['A']['W'] = -1,
+		['W']['A'] = -1,
 		['T']['-'] = -2,
 		['-']['T'] = -2,
 	},
@@ -853,7 +863,7 @@ static void __Font_drawText(Font* font, const char* text, int* out_width, int* o
 			}
 		}
 	}
-	ow -= font->offset_x; // reverse pad?
+	ow -= font->offset_x * 2; // reverse pad?
 	
 	if (out_width) *out_width = ow;
 	if (out_height) *out_height = oh;
@@ -1523,7 +1533,7 @@ static int App_wrap(Font* font, char* text, int max_lines, char** lines, int* sp
 		else sprintf(test_line,"%s", word);
 	
 		Font_getTextSize(font, test_line, &line_width, NULL);
-		line_width += font->offset_x * 2;
+		// line_width += font->offset_x * 2;
 		
 		int ow = 6 + 6;
 		if (line_width<=SCREEN_WIDTH-ow) {
@@ -2629,6 +2639,7 @@ static void App_menu(void) {
 					Font_getTextSize(font24, items[i], &w, NULL);
 					if (w>mw) mw = w;
 				}
+				mw += font24->offset_x;
 			
 				w = 8 + mw + 8;
 				x = (SCREEN_WIDTH - w) / 2;
