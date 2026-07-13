@@ -1,4 +1,4 @@
-Copyright (c) Shaun Inman.
+Copyright Shaun Inman.
 
 This project is shared for personal, educational, and community non-commercial use. It is provided as-is, without warranty.
 
