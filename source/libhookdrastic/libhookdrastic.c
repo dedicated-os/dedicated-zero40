@@ -1449,12 +1449,14 @@ static int Device_handleEvent(SDL_Event* event) {
 	
 	if (Pad_isPressed(PAD_MENU)) {
 		if (Pad_justPressed(PAD_L2)) {
+			Pad_consume(PAD_L2);
 			settings.cropped = !settings.cropped;
 			App_sync(1);
 			menu_combo = 1;
 			return 1;
 		}
 		else if (Pad_justPressed(PAD_R2)) {
+			Pad_consume(PAD_R2);
 			settings.spread = !settings.spread;
 			App_sync(1);
 			menu_combo = 1;
@@ -1462,6 +1464,7 @@ static int Device_handleEvent(SDL_Event* event) {
 		}
 		
 		if (Pad_justPressed(PAD_START)) { // capture
+			Pad_consume(PAD_START);
 			app.capture = 1;
 			menu_combo = 1;
 			return 1;
