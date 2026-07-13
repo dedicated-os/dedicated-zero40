@@ -1,8 +1,8 @@
 Copyright (c) Shaun Inman.
 
-This project is shared for personal, educational, preservation, and community non-commercial use. It is provided as-is, without warranty.
+This project is shared for personal, educational, and community non-commercial use. It is provided as-is, without warranty.
 
-Commercial use is not licensed. This includes manufacturing, resale, paid distribution, preinstallation on sold devices, paid support bundles, or use in any commercial product or service.
+Commercial use is prohibited. This includes manufacturing, resale, paid distribution, preinstallation on sold devices, paid support bundles, or use in any commercial product or service.
 
 You may study this project, build it for yourself, modify it for personal use, and share non-commercial modifications with clear attribution and differentiation.
 
