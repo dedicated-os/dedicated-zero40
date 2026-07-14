@@ -35,6 +35,8 @@ Screens have a gap between them by default.
 
 This can be toggled with `G + R2`.
 
+## Configuration 
+
 Pressing `SELECT` in the menu brings up the datetime switcher.
 
 <img width=240 src="github/dedicated-datetime.png" title=Datetime /> 
