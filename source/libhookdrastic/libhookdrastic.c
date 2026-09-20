@@ -316,14 +316,14 @@ static int (*real__printf_chk)(int flag, const char *fmt, ...) = NULL;
 // --------------------------------------------
 // TODO: tmp? SDL2 compat
 // --------------------------------------------
-
-typedef enum SDL_ScaleMode
-{
-	SDL_ScaleModeNearest, /**< nearest pixel sampling */
-	SDL_ScaleModeLinear,  /**< linear filtering */
-	SDL_ScaleModeBest	 /**< anisotropic filtering */
-} SDL_ScaleMode;
-int SDL_SetTextureScaleMode(SDL_Texture * texture, SDL_ScaleMode scaleMode);
+// no longer necessary with updated toolchain
+// typedef enum SDL_ScaleMode
+// {
+// 	SDL_ScaleModeNearest, /**< nearest pixel sampling */
+// 	SDL_ScaleModeLinear,  /**< linear filtering */
+// 	SDL_ScaleModeBest	 /**< anisotropic filtering */
+// } SDL_ScaleMode;
+// int SDL_SetTextureScaleMode(SDL_Texture * texture, SDL_ScaleMode scaleMode);
 
 // --------------------------------------------
 // logging
