@@ -1,44 +1,64 @@
-# DEDICATED OS
+English | [日本語](README.ja.md)
 
-DEDICATED OS is a cluster of hyper-focused, single-system launchers for specific devices. This version is for playing Nintendo DS on the MagicX Zero40.
+# DEDICATED OS JP+ (`dedicated-zero40-jp-custom`)
 
-This is what it looks like:
+An unofficial, custom fork of [DEDICATED OS](https://github.com/dedicated-os/dedicated-zero40) for playing Nintendo DS on the MagicX Zero40.
 
-<img width=240 src="github/dedicated-menu.png" title=Menu /> <img width=240 src="github/dedicated-archive.png" title=Archive /> 
+This build preserves the core minimalist experience of the original DEDICATED OS while adding Japanese ROM name rendering, independent per-screen cropping, per-title screen swapping, Hi-Res 3D toggling, and a screenshot shortcut.
 
-That's it. You can [grab the latest version here](https://github.com/dedicated-os/dedicated-zero40/releases).
+<img width=240 src="github/bootlogo-preview.png" title="Bootlogo" /> <img width=240 src="github/dedicated-menu.png" title="Menu" />
 
-## Features
+You can [grab the latest release here](../../releases).
 
-- no options
-- datetime switcher
-- single save state
-- fast game switcher
-- drastic for emulation
-- fast-forward
-- archive for hiding completed or unstarted games
-- auto-save on poweroff, when switching games
-- auto-resume on boot
-- faux-sleep with auto-poweroff
+## Added Features
 
-## Presentation
+- **Japanese ROM Names:** Renders UTF-8 / Japanese game titles using `SDL2_ttf` and `NotoSansJP-Bold.ttf` (`font.ttf`), with natural sorting (combining Hiragana and Katakana).
+- **Independent Screen Crop:** Toggle integer scaling / overscan cropping individually for the top or bottom screen.
+- **Per-Title Screen Swap:** Swap the top and bottom screens on the fly. The state is saved per game title.
+- **Hi-Res 3D Toggle:** Switch DraStic's high-resolution 3D rendering (`hires_3d`, `threaded_3d`, `disable_edge_marking`) on or off directly from in-game. Automatically restarts and resumes your session.
+- **Screenshot Capture:** Save combined dual-screen screenshots directly to `/mnt/SDCARD/userdata/screenshots/`.
 
-DEDICATED OS integer scales and crops the overscan on the MagicX Zero40. This shaves off 8 source pixels from either side of the screen but produces a much sharper, much larger image. (Left/top is cropped, right/bottom is scaled.)
+## Shortcuts
 
-<img width=240 src="github/dedicated-cropped.png" title=Cropped /> <img width=240 src="github/dedicated-scaled.png" title=Scaled /> 
+`G` refers to the `MENU` / `HOME` / `BACK` button.
 
-This can be toggled with `G + L2`.
+| Action | Shortcut | Notes |
+| :--- | :--- | :--- |
+| **Crop (Both Screens)** | `G + L2` | Toggles overscan crop for both screens |
+| **Crop (Top Screen)** | `G + Up` or `G + Y` | Toggles crop for the top screen only |
+| **Crop (Bottom Screen)** | `G + Down` or `G + B` | Toggles crop for the bottom screen only |
+| **Screen Gap** | `G + R2` | Toggles the gap between top and bottom screens |
+| **Screen Swap** | `G + SELECT` | Swaps top/bottom screens (saved per title) |
+| **Hi-Res 3D** | `G + START` | Toggles Hi-Res 3D and auto-restarts the game |
+| **Brightness** | `G + L1 / R1` | Adjusts screen brightness |
+| **Fast-Forward** | `L3` | Toggles fast-forward |
+| **Faux Lid / Mic** | `L2` / `R2` | Simulates closing the DS lid / blowing into the mic |
+| **Screenshot** | `G + A` | Saves a `.bmp` image to `userdata/screenshots/` |
 
-Screens have a gap between them by default.
+## Installation & Updating
 
-<img width=240 src="github/dedicated-gap.png" title=Gap /> <img width=240 src="github/dedicated-gapless.png" title=Gapless /> 
+### Updating from Original DEDICATED OS (or an older JP+ release)
 
-This can be toggled with `G + R2`.
+1. Ensure you already have the official [DEDICATED OS](https://github.com/dedicated-os/dedicated-zero40/releases) installed and working on your TF2/EXT SD card.
+2. Download the latest `dedicated-zero40-jp-custom` zip from the [Releases](../../releases) page and unzip it.
+3. Copy both `system.zip` and `bootlogo.bmp` to the root of your TF2/EXT SD card, overwriting the existing files.
+   *(Note: Replacing only `system.zip` will not update the boot logo shortcut guide.)*
+4. Eject the SD card safely, insert it into the bottom TF2/EXT slot, and boot your device.
 
-## Configuration 
+### Fresh Installation
 
-Pressing `SELECT` in the menu brings up the datetime switcher.
+1. Follow the official installation guide on [dedicated-os/dedicated-zero40](https://github.com/dedicated-os/dedicated-zero40/releases) to flash `main-zero40` (TF1/INT) and set up your FAT32 SD card (TF2/EXT).
+2. Unzip the release package from this repository and copy its contents (`system.zip`, `bootlogo.bmp`, etc.) to the root of your TF2/EXT SD card, overwriting if prompted.
+3. Add your NDS games and BIOS files, then insert the card into the TF2/EXT slot.
 
-<img width=240 src="github/dedicated-datetime.png" title=Datetime /> 
+## Configuration & Fonts
 
-After changing the datetime you must save in-game then reset from the menu for the game to notice the change.
+- **Datetime Switcher:** Press `SELECT` in the main menu to set the system date and time. Save in-game and reset from the menu for the game to recognize the change.
+- **Custom Fonts:** The release includes `NotoSansJP-Bold.ttf` (installed as `/mnt/SDCARD/system/assets/font.ttf` along with `OFL.txt`). You can replace `font.ttf` with any TrueType font of your choice. If missing, the launcher falls back to its built-in bitmap font.
+
+## Credits & License
+
+- Original **DEDICATED OS** by [shauninman / dedicated-os](https://github.com/dedicated-os/dedicated-zero40).
+- Bundled Japanese font **Noto Sans JP** licensed under the SIL Open Font License 1.1 (`OFL.txt`).
+- See [LICENSE.md](LICENSE.md) for project license details.
+
