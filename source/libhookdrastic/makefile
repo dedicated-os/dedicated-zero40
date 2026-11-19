@@ -29,3 +29,15 @@ test:
 
 clean:
 	rm -rf $(TARGET).so
+
+# SDL2-only regression tests; no device, ALSA, SDL_image or SDL_ttf required.
+SDL2_CONFIG ?= sdl2-config
+SDL2_TEST_CFLAGS ?= -I$(shell $(SDL2_CONFIG) --prefix)/include $(shell $(SDL2_CONFIG) --cflags)
+SDL2_TEST_LIBS ?= $(shell $(SDL2_CONFIG) --libs)
+.PHONY: test-screenframe test-screenframe-portable test-displaymode test-avprofile test-avprofile-detail test-avsystem test-powerstatus test-gametexture test-gameupload
+test-screenframe test-screenframe-portable test-displaymode test-avprofile test-avprofile-detail test-avsystem test-powerstatus test-gametexture test-gameupload:
+	@set -e; \
+		test_binary=$$(mktemp /tmp/drastic-$@.XXXXXX); \
+		trap 'rm -f "$$test_binary"' EXIT HUP INT TERM; \
+		$(CROSS_COMPILE)gcc $(CPPFLAGS) $(CFLAGS) $(if $(filter %-portable,$@),-DSCREEN_FRAME_DISABLE_NEON) -Wall -Wextra -Werror $(SDL2_TEST_CFLAGS) tests/$(subst -,_,$(patsubst %-portable,%,$@)).c -o "$$test_binary" $(SDL2_TEST_LIBS); \
+		$(TEST_RUNNER) "$$test_binary"

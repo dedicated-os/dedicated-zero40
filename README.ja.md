@@ -15,6 +15,9 @@ MagicX Zero40向けニンテンドーDS専用ランチャー [DEDICATED OS](http
 > 端を切り落としてでも**端数の出ない2倍（整数スケーリング）**を優先する設計により、文字やドット絵が一切にじまない、くっきりとした表示を実現しています。
 
 <img width=240 src="github/bootlogo-preview.png" title="Bootlogo" />
+<img width=240 src="github/original.png" title="Original" />
+<img width=240 src="github/pixel-perfect.png" title="Pixel Perfect" />
+<img width=240 src="github/hi-res.png" title="Hi-Res 3D" />
 
 最新版は [Releasesページ](../../releases) からダウンロードできます。
 

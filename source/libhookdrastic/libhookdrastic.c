@@ -22,6 +22,12 @@
 #include <SDL2/SDL_ttf.h>
 #include <alsa/asoundlib.h>
 #include "fastscale.h"
+#include "displaymode.h"
+#include "avprofile.h"
+#include "avsystem.h"
+#include "powerstatus.h"
+#include "screenframe.h"
+#include "gametexture.h"
 #include "utf8.h"
 
 // --------------------------------------------
@@ -173,6 +179,12 @@ static struct {
 } app;
 
 static int osd_at;
+static int display_notice_pending = 1;
+static int display_notice_active;
+static Uint32 display_notice_at;
+static AVProfile av_profile;
+static AVSystem av_system;
+static PowerStatus game_power_status;
 
 // --------------------------------------------
 // raw HMI controls
@@ -244,10 +256,11 @@ typedef struct {
 	int spread;
 	int screen_swap;
 	char game[MAX_PATH];
+	int display_mode;
 } Settings;
 
 static Settings settings = {
-	.version = 2,
+	.version = 3,
 	.volume = 6,
 	.brightness = 3,
 	.cropped = CROP_ALL,
@@ -305,25 +318,32 @@ static void Settings_toggleCrop(int mask) {
 #define SETTINGS_PATH USERDATA_PATH "/settings.bin"
 static void Settings_load(void) {
 	raw_vol(0);
+	settings.display_mode = Config_get_hires_3d() ? DISPLAY_HIRES : DISPLAY_OFF;
 	
 	if (access(SETTINGS_PATH, F_OK)!=0) return;
 	
 	FILE* file = fopen(SETTINGS_PATH, "rb");
 	if (!file) return;
-	Settings loaded;
-	size_t count = fread(&loaded, sizeof(loaded), 1, file);
+	Settings loaded = {0};
+	size_t count = fread(&loaded, 1, sizeof(loaded), file);
 	fclose(file);
-	if (count != 1 || loaded.version < 1 || loaded.version > 2) return;
+	if (count < offsetof(Settings, display_mode) || loaded.version < 1 || loaded.version > 3) return;
+	if (loaded.version == 3 && count != sizeof(loaded)) return;
+	if (loaded.version < 3 || !DisplayMode_valid(loaded.display_mode))
+		loaded.display_mode = settings.display_mode;
 	if (loaded.version == 1) loaded.cropped = loaded.cropped ? CROP_ALL : 0;
 	loaded.cropped &= CROP_ALL;
-	loaded.version = 2;
+	loaded.version = 3;
 	settings = loaded;
 }
-static void Settings_save(void) {
-	FILE* file = fopen(SETTINGS_PATH, "wb");
-	if (!file) return;
-	fwrite(&settings, sizeof(settings), 1, file);
-	fclose(file);
+static int Settings_save(void) {
+	FILE* file = fopen(SETTINGS_PATH ".tmp", "wb");
+	if (!file) return 0;
+	int saved = fwrite(&settings, sizeof(settings), 1, file) == 1;
+	if (fclose(file) != 0) saved = 0;
+	if (saved && rename(SETTINGS_PATH ".tmp", SETTINGS_PATH) == 0) return 1;
+	unlink(SETTINGS_PATH ".tmp");
+	return 0;
 }
 static void Settings_setVolume(int value) {
 	char cmd[MAX_FILE];
@@ -408,6 +428,17 @@ typedef struct {
 } FastScreen;
 
 static FastScreen fast_screens[SCREEN_COUNT];
+static ScreenFrame screen_frames[SCREEN_COUNT];
+static DisplayScreen display_screens[SCREEN_COUNT];
+static GameUpload game_uploads[SCREEN_COUNT];
+
+static ScreenFrame *ScreenFrame_find(SDL_Texture *texture) {
+	if (!texture) return NULL;
+	for (int i=0; i<SCREEN_COUNT; i++) {
+		if (app.screens[i] == texture) return &screen_frames[i];
+	}
+	return NULL;
+}
 
 static FastScreen *FastScreen_find(SDL_Texture *texture) {
 	if (!texture) return NULL;
@@ -599,7 +630,7 @@ static int Game_needs_single_threaded_hires(const char *game_id) {
 static void drastic_load_nds_and_jump(const char* path) {
 	drastic_await_save();
 	// The listed games reverse the 3D screen orientation when hi-res mode is active.
-	Config_set_hires_3d(Config_get_hires_3d());
+	Config_set_hires_3d(settings.display_mode == DISPLAY_HIRES);
 
 	drastic_load_nds_t d_load_nds = GET_PFN(app.base + 0x0006fd30); // nm ./drastic | grep load_nds
 	drastic_reset_system_t d_reset_system = GET_PFN(app.base + 0x0000fd50); // nm ./drastic | grep reset_system
@@ -1331,7 +1362,8 @@ enum {
 };
 
 static void App_screenshot(int game, int screen, int snap);
-static void App_userScreenshot(void);
+static void App_userScreenshot(SDL_Renderer *renderer);
+static void App_captureBeforePresent(SDL_Renderer *renderer);
 static void App_quit(void);
 static void App_battery(int battery, int is_charging, int shadowed);
 
@@ -1512,6 +1544,7 @@ static void Device_goodbye(void) {
 	for (int i=0; i<3; i++) {
 		Font_shadowText(app.renderer, font36, lines[i], 6, 42+(i*36), WHITE_COLOR);
 	}
+	App_captureBeforePresent(app.renderer);
 	real_SDL_RenderPresent(app.renderer);
 }
 static void Device_poweroff(void) {
@@ -1668,7 +1701,7 @@ static int Device_handleEvent(SDL_Event* event) {
 	if (Pad_isPressed(PAD_MENU) && Pad_justPressed(PAD_A)) {
 		Pad_consume(PAD_A | PAD_MENU);
 		screenshot_menu_release = 1;
-		if (!app.menu) App_userScreenshot();
+		app.capture = 1;
 		return 1;
 	}
 	if (screenshot_menu_release && Pad_justReleased(PAD_MENU)) {
@@ -1733,19 +1766,30 @@ static int Device_handleEvent(SDL_Event* event) {
 
 		if (Pad_justPressed(PAD_START)) {
 			Pad_consume(PAD_START);
-			int enabled = !Config_get_hires_3d();
-			if (!Config_set_hires_3d(enabled)) {
+			menu_combo = 1;
+			DisplayMode before = settings.display_mode;
+			DisplayMode next = DisplayMode_next(before);
+			int restart = DisplayMode_needsRestart(before, next);
+			int enabled = next == DISPLAY_HIRES;
+			if (restart && !Config_set_hires_3d(enabled)) {
 				SDL_Log("Could not update hires_3d in %s", DRASTIC_CONFIG_PATH);
-				menu_combo = 1;
 				return 1;
 			}
-			menu_combo = 1;
-			SDL_Log("Hi-res 3D %s (threaded_3d=%d, disable_edge_marking=%d); saving state and restarting DraStic",
-				enabled ? "ON" : "OFF",
-				enabled && !Game_needs_single_threaded_hires(app.game_id), enabled != 0);
-			Settings_save();
-			App_save();
-			drastic_quit();
+			settings.display_mode = next;
+			if (!Settings_save()) {
+				settings.display_mode = before;
+				if (restart) Config_set_hires_3d(before == DISPLAY_HIRES);
+				SDL_Log("Could not save display mode; keeping %s", DisplayMode_label(before));
+				return 1;
+			}
+			SDL_Log("Display mode %s -> %s%s", DisplayMode_label(before), DisplayMode_label(next),
+				restart ? "; saving state and restarting DraStic" : "");
+			display_notice_pending = 1;
+			display_notice_active = 0;
+			if (restart) {
+				App_save();
+				drastic_quit();
+			}
 			return 1;
 		}
 
@@ -2027,6 +2071,7 @@ static void App_empty(void) {
 	Font_shadowText(app.renderer, font24, "Dedicated OS JP+",	6, 6, LIGHT_COLOR);
 	Font_shadowText(app.renderer, font36, "No games found", 6, 42, WHITE_COLOR);
 	
+	App_captureBeforePresent(app.renderer);
 	real_SDL_RenderPresent(app.renderer);
 	
 	sleep(5);
@@ -2089,10 +2134,7 @@ static int App_next(int start, int dir) {
 	return start;
 }
 
-static void App_userScreenshot(void) {
-	if (!app.screens[0] || !app.screens[1]) return;
-	if (!real_SDL_LockTexture || !real_SDL_UnlockTexture) return;
-
+static void App_userScreenshot(SDL_Renderer *renderer) {
 	const char *game_name = app.game_name[0] ? app.game_name : "drastic";
 	mkdir(USERDATA_PATH "/screenshots", 0777);
 
@@ -2104,94 +2146,50 @@ static void App_userScreenshot(void) {
 	}
 	if (index >= 100000) return;
 
-	int w0 = 0, h0 = 0, access0 = 0;
-	int w1 = 0, h1 = 0, access1 = 0;
-	Uint32 fmt0 = 0, fmt1 = 0;
-	SDL_QueryTexture(app.screens[0], &fmt0, &access0, &w0, &h0);
-	SDL_QueryTexture(app.screens[1], &fmt1, &access1, &w1, &h1);
-	if (w0 <= 0 || h0 <= 0 || w1 <= 0 || h1 <= 0) return;
-
-	void *pixels0 = NULL, *pixels1 = NULL;
-	int pitch0 = 0, pitch1 = 0;
-	if (real_SDL_LockTexture(app.screens[0], NULL, &pixels0, &pitch0) != 0) return;
-	if (real_SDL_LockTexture(app.screens[1], NULL, &pixels1, &pitch1) != 0) {
-		real_SDL_UnlockTexture(app.screens[0]);
+	SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_WIDTH, SCREEN_HEIGHT,
+		24, SDL_PIXELFORMAT_RGB24);
+	if (!surface) {
+		SDL_Log("Screenshot allocation failed: %s", SDL_GetError());
 		return;
 	}
+	if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_RGB24,
+		surface->pixels, surface->pitch) == 0 && SDL_SaveBMP(surface, path) == 0)
+		SDL_Log("Screenshot saved: %s", path);
+	else SDL_Log("Screenshot failed: %s", SDL_GetError());
+	SDL_FreeSurface(surface);
+}
 
-	const int bpp0 = SDL_BYTESPERPIXEL(fmt0);
-	const int depth0 = SDL_BITSPERPIXEL(fmt0);
-
-	if (w0 == w1 && fmt0 == fmt1 && bpp0 > 0) {
-		SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, w0, h0 + h1, depth0, fmt0);
-		if (surface) {
-			for (int y = 0; y < h0; y++) {
-				memcpy((Uint8*)surface->pixels + (size_t)y * surface->pitch,
-				       (const Uint8*)pixels0 + (size_t)y * pitch0,
-				       (size_t)w0 * bpp0);
-			}
-			for (int y = 0; y < h1; y++) {
-				memcpy((Uint8*)surface->pixels + (size_t)(h0 + y) * surface->pitch,
-				       (const Uint8*)pixels1 + (size_t)y * pitch1,
-				       (size_t)w1 * bpp0);
-			}
-			SDL_SaveBMP(surface, path);
-			SDL_FreeSurface(surface);
-			SDL_Log("Screenshot saved: %s", path);
-		}
-	} else {
-		SDL_Surface *s0 = SDL_CreateRGBSurfaceWithFormatFrom(pixels0, w0, h0, depth0, pitch0, fmt0);
-		SDL_Surface *s1 = SDL_CreateRGBSurfaceWithFormatFrom(pixels1, w1, h1, SDL_BITSPERPIXEL(fmt1), pitch1, fmt1);
-		int max_w = w0 > w1 ? w0 : w1;
-		SDL_Surface *combined = SDL_CreateRGBSurfaceWithFormat(0, max_w, h0 + h1, 32, SDL_PIXELFORMAT_ARGB8888);
-		if (combined && s0 && s1) {
-			SDL_Rect r0 = {0, 0, w0, h0};
-			SDL_Rect r1 = {0, h0, w1, h1};
-			SDL_BlitSurface(s0, NULL, combined, &r0);
-			SDL_BlitSurface(s1, NULL, combined, &r1);
-			SDL_SaveBMP(combined, path);
-			SDL_Log("Screenshot saved: %s", path);
-		}
-		if (combined) SDL_FreeSurface(combined);
-		if (s0) SDL_FreeSurface(s0);
-		if (s1) SDL_FreeSurface(s1);
+static void App_captureBeforePresent(SDL_Renderer *renderer) {
+	if (!app.capture) return;
+	app.capture = 0;
+	SDL_Renderer *capture_renderer = renderer ? renderer : app.renderer;
+	if (!capture_renderer) {
+		SDL_Log("Screenshot unavailable: renderer is null");
+		return;
 	}
-
-	real_SDL_UnlockTexture(app.screens[1]);
-	real_SDL_UnlockTexture(app.screens[0]);
+	App_userScreenshot(capture_renderer);
 }
 
 static void App_screenshot(int game, int screen, int snap) {
-	if (!app.screens[screen]) return;
-	SDL_Texture* texture = app.screens[screen];
-	
+	SDL_Surface *surface = ScreenFrame_snapshot(&screen_frames[screen]);
+	if (!surface) {
+		SDL_Log("Snapshot screen %d unavailable: %s", screen, SDL_GetError());
+		return;
+	}
+
 	char game_name[MAX_FILE];
 	if (snap==SNAP_CURRENT) strcpy(game_name, "current");
 	else strcpy(game_name, app.items[game].name);
 	char *dot = strrchr(game_name, '.');
 	if (dot && dot!=game_name) *dot = '\0';
-	
+
 	char path[MAX_PATH];
 	sprintf(path, USERDATA_PATH "/screenshots/%s-%i.bmp", game_name, screen);
-	// SDL_Log("screenshot: %s", path);
-	
-	void *pixels = NULL;
-	int pitch = 0;
-
-	int w,h,access;
-	Uint32 fmt;
-	SDL_QueryTexture(texture, &fmt, &access, &w, &h);
-	SDL_LockTexture(texture, NULL, &pixels, &pitch);
-
-	const int depth = SDL_BITSPERPIXEL(fmt);
-	SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom(pixels, w, h, depth, pitch, fmt);
-	if (surface) {
-		SDL_SaveBMP(surface, path);
-		SDL_FreeSurface(surface);
-	}
-
-	SDL_UnlockTexture(texture);
+	if (SDL_SaveBMP(surface, path) != 0)
+		SDL_Log("Snapshot failed: %s", SDL_GetError());
+	SDL_FreeSurface(surface);
 }
+
 static void App_preview(int game, int screen, int snap) {
 	if (!app.preview[screen]) return;
 	SDL_Texture* texture = app.preview[screen];
@@ -2680,6 +2678,7 @@ static void App_datetime(void) {
 				ox += 8;
 			}
 			
+			App_captureBeforePresent(app.renderer);
 			real_SDL_RenderPresent(app.renderer);
 		}
 		else {
@@ -2758,7 +2757,12 @@ static void App_init(void) {
 static void App_quit(void) {
 	
 	free(app.items);
-	for (int i=0; i<SCREEN_COUNT; i++) FastScreen_reset(&fast_screens[i]);
+	for (int i=0; i<SCREEN_COUNT; i++) {
+		FastScreen_reset(&fast_screens[i]);
+		GameUpload_reset(&game_uploads[i], real_SDL_DestroyTexture);
+		ScreenFrame_reset(&screen_frames[i]);
+		DisplayScreen_reset(&display_screens[i]);
+	}
 	
 	if (app.bg) SDL_DestroyTexture(app.bg);
 	if (app.icons) SDL_DestroyTexture(app.icons);
@@ -2786,11 +2790,38 @@ static void App_render(void) {
 			app.rects[i].w == FAST_SCALE_WIDTH && app.rects[i].h == FAST_SCALE_HEIGHT) {
 			texture = screen->output; // 480x360 -> 480x360: no SDL resampling.
 		}
-		real_SDL_RenderCopy(app.renderer, texture, NULL, &app.rects[i]);
+		if (texture == app.screens[i] && game_uploads[i].count > 1)
+			texture = GameUpload_current(&game_uploads[i]);
+		if (texture == app.screens[i]) {
+			DisplayScreen_copy(&display_screens[i], app.renderer, settings.display_mode,
+				Settings_isCropped(i), &app.rects[i], real_SDL_RenderCopy);
+		} else real_SDL_RenderCopy(app.renderer, texture, NULL, &app.rects[i]);
 	}
 }
 
+static void App_displayModeNotice(void) {
+	if (display_notice_pending) {
+		if (!screen_frames[0].ready || !screen_frames[1].ready) return;
+		display_notice_pending = 0;
+		display_notice_active = 1;
+		display_notice_at = SDL_GetTicks();
+	}
+	if (!display_notice_active) return;
+	if ((Uint32)(SDL_GetTicks() - display_notice_at) >= 3000) {
+		display_notice_active = 0;
+		return;
+	}
+	const char *label = DisplayMode_label(settings.display_mode);
+	int width = 0, height = 0;
+	Font_getTextSize(font24, label, &width, &height);
+	int x = SCREEN_WIDTH * 3 / 4 - width / 2;
+	int y = (SCREEN_HEIGHT - height) / 2;
+	AA_rect(x-8, y-6, width+16, height+12, 0, TRIAD_ALPHA(BLACK_TRIAD, 0xc0));
+	Font_shadowText(app.renderer, font24, label, x, y, WHITE_COLOR);
+}
+
 static void App_menu(void) {
+	AVProfile_resetFrame(&av_profile);
 
 	Device_mute(1);
 
@@ -3176,6 +3207,7 @@ static void App_menu(void) {
 			else if (app.osd==OSD_BRIGHTNESS) App_OSD("BRIGHTNESS", settings.brightness, 10);
 			
 			// flip
+			App_captureBeforePresent(app.renderer);
 			real_SDL_RenderPresent(app.renderer);
 			
 		}
@@ -3287,6 +3319,7 @@ static void App_batmon(void) {
 			for (int i=0; i<2; i++) {
 				SDL_SetRenderDrawColor(app.renderer, BLACK_TRIAD,0xff);
 				real_SDL_RenderClear(app.renderer);
+				App_captureBeforePresent(app.renderer);
 				real_SDL_RenderPresent(app.renderer);
 			}
 			break;
@@ -3322,6 +3355,7 @@ static void App_batmon(void) {
 			else if (app.osd==OSD_BRIGHTNESS) App_OSD("BRIGHTNESS", settings.brightness, 10);
 			
 			// flip
+			App_captureBeforePresent(app.renderer);
 			real_SDL_RenderPresent(app.renderer);
 			
 		}
@@ -3371,8 +3405,15 @@ void SDL_SetWindowSize(SDL_Window* window, int w, int h) {
 
 SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
 	app.software_renderer = 0;
-	int hires_3d = Config_get_hires_3d();
+	int hires_3d = settings.display_mode == DISPLAY_HIRES;
 	const char *wanted = hires_3d ? "software" : "opengles2";
+	// Keep the established default until GLES output is verified on the device.
+	const char *override = getenv("DRASTIC_RENDERER");
+	if (override && *override) {
+		if (strcmp(override, "software") == 0 || strcmp(override, "opengles2") == 0)
+			wanted = override;
+		else SDL_Log("Ignoring unsupported DRASTIC_RENDERER=%s", override);
+	}
 	int driver_count = SDL_GetNumRenderDrivers();
 	int selected = -1;
 	for (int i=0; i<driver_count; i++) {
@@ -3406,6 +3447,18 @@ SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
 		app.software_renderer = info.name && strcmp(info.name, "software") == 0;
 		SDL_Log("Hi-res 3D %s; renderer=%s", hires_3d ? "ON" : "OFF",
 			info.name ? info.name : "unknown");
+		int swap_interval = -1;
+		if (info.name && strcmp(info.name, "opengles2") == 0)
+			swap_interval = SDL_GL_GetSwapInterval();
+		SDL_Log("Renderer flags requested=0x%x effective=0x%x actual=0x%x; vsync=%d swap_interval=%d",
+			flags, effective_flags, info.flags, !!(info.flags & SDL_RENDERER_PRESENTVSYNC), swap_interval);
+		SDL_Log("Display mode=%s", DisplayMode_label(settings.display_mode));
+		SDL_Log("Game power status polling interval=%ums", POWER_STATUS_POLL_MS);
+		int window_w = 0, window_h = 0, output_w = 0, output_h = 0;
+		SDL_GetWindowSize(window, &window_w, &window_h);
+		SDL_GetRendererOutputSize(app.renderer, &output_w, &output_h);
+		SDL_Log("SDL video=%s; window=%dx%d; output=%dx%d; game alpha=opaque",
+			SDL_GetCurrentVideoDriver(), window_w, window_h, output_w, output_h);
 	} else {
 		SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
 	}
@@ -3420,13 +3473,20 @@ int SDL_RenderClear(SDL_Renderer* renderer) {
 	return 1; // complete render takeover
 }
 int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture  *texture, const SDL_Rect *srcrect, const SDL_Rect *dstrect) {
-	if (in_drastic_menu) return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect);
+	if (in_drastic_menu) {
+		ScreenFrame *frame = ScreenFrame_find(texture);
+		if (frame && game_uploads[frame - screen_frames].count > 1)
+			texture = GameUpload_current(&game_uploads[frame - screen_frames]);
+		return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect);
+	}
 	return 1; // complete render takeover
 }
 
 void SDL_RenderPresent(SDL_Renderer *renderer) {
+	if (in_drastic_menu) AVProfile_resetFrame(&av_profile);
 	if (!in_drastic_menu) {
 		if (loader.state!=LOADER_IDLE) {
+			AVProfile_resetFrame(&av_profile);
 			if (loader.state==LOADER_REQUESTED) {
 				puts("[LOAD] requesting load...");
 				loader.state = LOADER_AWAITING;
@@ -3449,11 +3509,26 @@ void SDL_RenderPresent(SDL_Renderer *renderer) {
 			drastic_log_runtime_config("first-game-frame");
 			runtime_config_log_pending = 0;
 		}
+		if (av_profile.detail && !AVProfile_isFrameThread(&av_profile)) AVSystem_setMainThread(&av_system);
+		AVProfile_frame(&av_profile);
+		Uint64 draw_started = AVProfile_now(&av_profile);
 		App_render();
+		AVProfile_end(&av_profile, AV_DRAW, draw_started);
 	}
+	int detail_game = av_profile.detail && !app.menu && !in_drastic_menu;
+	Uint64 overlay_started = detail_game ? AVProfile_now(&av_profile) : 0;
 	if (!app.menu) {
-		int battery = getInt(app.bat);
-		int is_charging = getInt(app.usb);
+		if (!in_drastic_menu) App_displayModeNotice();
+		// Battery sysfs reads may query the PMIC. Poll once per second instead
+		// of putting two device reads on every game's frame deadline.
+		Uint32 power_now = SDL_GetTicks();
+		if (PowerStatus_due(&game_power_status, power_now)) {
+			Uint64 power_started = detail_game ? AVProfile_now(&av_profile) : 0;
+			PowerStatus_poll(&game_power_status, power_now, app.bat, app.usb, getInt);
+			if (detail_game) AVProfile_end(&av_profile, AV_POWER_POLL, power_started);
+		}
+		int battery = game_power_status.battery;
+		int is_charging = game_power_status.charging;
 		if (battery<=10 && !is_charging) App_battery(battery, 0, 0);
 		if (app.osd==OSD_VOLUME) App_OSD("VOLUME", settings.volume, 20);
 		else if (app.osd==OSD_BRIGHTNESS) App_OSD("BRIGHTNESS", settings.brightness, 10);
@@ -3462,21 +3537,42 @@ void SDL_RenderPresent(SDL_Renderer *renderer) {
 			real_SDL_RenderCopy(app.renderer, app.icons, &(SDL_Rect){48,0,24,24}, &(SDL_Rect){4,4,24,24});
 		}
 	}
+	if (detail_game) AVProfile_end(&av_profile, AV_OVERLAY, overlay_started);
+	Uint64 present_started = AVProfile_now(&av_profile);
+	App_captureBeforePresent(renderer);
 	real_SDL_RenderPresent(renderer);
+	AVProfile_end(&av_profile, AV_PRESENT, present_started);
+	Uint64 report_started = detail_game ? AVProfile_now(&av_profile) : 0;
+	if (!app.menu && AVProfile_report(&av_profile, DisplayMode_label(settings.display_mode)) && detail_game) {
+		AVSystem_report(&av_system);
+		AVProfile_end(&av_profile, AV_REPORT_IO, report_started);
+	}
 	if (osd_at+1000<SDL_GetTicks()) app.osd = OSD_NONE;
+	Uint64 device_started = detail_game ? AVProfile_now(&av_profile) : 0;
 	Device_tick();
+	if (detail_game) {
+		AVProfile_end(&av_profile, AV_DEVICE, device_started);
+		AVProfile_leavePresent(&av_profile);
+	}
 }
 
 
 
 SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, int w, int h) {
-	SDL_Texture *texture = real_SDL_CreateTexture(renderer, format, type, w, h);
+	Uint32 upload_format;
+	const char *opaque = getenv("DRASTIC_OPAQUE_TEXTURE");
+	SDL_Texture *texture = GameTexture_create(renderer, format, type, w, h,
+		!app.menu && renderer == app.renderer && (!opaque || strcmp(opaque, "0") != 0),
+		&upload_format, real_SDL_CreateTexture);
 	if (type!=SDL_TEXTUREACCESS_STREAMING || !texture || app.menu) return texture;
 	if (!((w==DS_WIDTH && h==DS_HEIGHT) || (w==DS_WIDTH*2 && h==DS_HEIGHT*2))) return texture;
 	if (app.screen_texture_width &&
 		(app.screen_texture_width!=w || app.screen_texture_height!=h)) {
 		for (int i=0; i<SCREEN_COUNT; i++) {
 			FastScreen_reset(&fast_screens[i]);
+			GameUpload_reset(&game_uploads[i], real_SDL_DestroyTexture);
+			ScreenFrame_reset(&screen_frames[i]);
+			DisplayScreen_reset(&display_screens[i]);
 			if (app.screens[i]) app.previous_screen_handles[i] = app.screens[i];
 			else if (app.previous_screen_handles[i]) app.pending_screen_slots |= 1u << i;
 		}
@@ -3510,7 +3606,18 @@ SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, 
 	}
 	if (slot>=0) {
 		FastScreen_reset(&fast_screens[slot]);
+		DisplayScreen_init(&display_screens[slot], texture);
 		app.screens[slot] = texture;
+		if (ScreenFrame_init(&screen_frames[slot], upload_format, w, h) != 0)
+			SDL_Log("Game frame allocation failed; snapshots unavailable: %s", SDL_GetError());
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+		const char *buffers = getenv("DRASTIC_UPLOAD_BUFFERS");
+		GameUpload_init(&game_uploads[slot], renderer, texture,
+			upload_format != format && screen_frames[slot].surface && buffers && strcmp(buffers, "2") == 0,
+			real_SDL_CreateTexture, real_SDL_DestroyTexture);
+		SDL_Log("Game screen %d: %dx%d %s; alpha=%s; upload_buffers=%d", slot, w, h,
+			SDL_GetPixelFormatName(upload_format),
+			upload_format != format ? "opaque GLES shader" : "CPU correction", game_uploads[slot].count);
 		if (app.software_renderer && w == FAST_SCALE_SOURCE_WIDTH &&
 			h == FAST_SCALE_SOURCE_HEIGHT && !SDL_ISPIXELFORMAT_FOURCC(format) &&
 			SDL_BYTESPERPIXEL(format) == 4) {
@@ -3525,7 +3632,9 @@ SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, 
 }
 
 int SDL_LockTexture(SDL_Texture *texture, const SDL_Rect *rect, void **pixels, int *pitch) {
-	int result = real_SDL_LockTexture(texture, rect, pixels, pitch);
+	ScreenFrame *frame = ScreenFrame_find(texture);
+	int result = frame && frame->surface ? ScreenFrame_lock(frame, rect, pixels, pitch) :
+		real_SDL_LockTexture(texture, rect, pixels, pitch);
 	FastScreen *screen = FastScreen_find(texture);
 	if (result == 0 && screen) {
 		screen->ready = 0;
@@ -3538,33 +3647,87 @@ int SDL_LockTexture(SDL_Texture *texture, const SDL_Rect *rect, void **pixels, i
 			screen->locked_pitch = *pitch;
 		}
 	}
+	if (result == 0 && frame && frame->surface && av_profile.detail)
+		frame->pixels_started = AVProfile_now(&av_profile);
 	return result;
 }
 
 void SDL_UnlockTexture(SDL_Texture *texture) {
+	ScreenFrame *frame = ScreenFrame_find(texture);
+	if (frame && frame->surface) {
+		if (!frame->locked) return;
+		if (av_profile.detail && frame->pixels_started) {
+			AVProfile_end(&av_profile, AV_PIXELS, frame->pixels_started);
+			frame->pixels_started = 0;
+		}
+		// The bundled DraStic's Hi-res NEON converters leave invalid alpha.
+		// XRGB GLES textures ignore those bytes; other formats still need the
+		// CPU correction before SDL/GLES or the software shrink copy sees them.
+		Uint64 started = AVProfile_now(&av_profile);
+		ScreenFrame_makeOpaque(frame, &frame->locked_rect);
+		AVProfile_end(&av_profile, AV_ALPHA, started);
+	}
 	FastScreen *screen = FastScreen_find(texture);
 	if (screen && screen->locked_pixels) {
 		// Consume the input while SDL still guarantees that its lock is valid.
+		Uint64 started = AVProfile_now(&av_profile);
 		FastScreen_update(screen, screen->locked_pixels, screen->locked_pitch);
+		AVProfile_end(&av_profile, AV_SHRINK, started);
 		screen->locked_pixels = NULL;
 	}
-	real_SDL_UnlockTexture(texture);
+	if (frame && frame->surface) {
+		Uint64 started = AVProfile_now(&av_profile);
+		GameUpload *upload = &game_uploads[frame - screen_frames];
+		frame->ready = (upload->count > 1 ?
+			GameUpload_update(upload, frame->surface->pixels, frame->surface->pitch, real_SDL_UpdateTexture) :
+			real_SDL_UpdateTexture(texture, &frame->locked_rect,
+				ScreenFrame_pixels(frame, &frame->locked_rect), frame->surface->pitch)) == 0;
+		AVProfile_end(&av_profile, AV_UPLOAD, started);
+		frame->locked = 0;
+		if (!frame->ready) {
+			if (screen) screen->ready = 0;
+			SDL_Log("Game screen upload failed: %s", SDL_GetError());
+		}
+	} else real_SDL_UnlockTexture(texture);
 }
 
 int SDL_UpdateTexture(SDL_Texture *texture, const SDL_Rect *rect, const void *pixels, int pitch) {
-	int result = real_SDL_UpdateTexture(texture, rect, pixels, pitch);
+	ScreenFrame *frame = ScreenFrame_find(texture);
+	SDL_Rect updated;
+	if (frame && frame->surface) {
+		Uint64 started = AVProfile_now(&av_profile);
+		if (ScreenFrame_update(frame, rect, pixels, pitch, &updated) != 0) return -1;
+		AVProfile_end(&av_profile, AV_PREPARE, started);
+		pixels = ScreenFrame_pixels(frame, &updated);
+		pitch = frame->surface->pitch;
+	}
+	Uint64 upload_started = AVProfile_now(&av_profile);
+	GameUpload *upload = frame ? &game_uploads[frame - screen_frames] : NULL;
+	int result = frame && frame->surface && upload->count > 1 ?
+		GameUpload_update(upload, frame->surface->pixels, frame->surface->pitch, real_SDL_UpdateTexture) :
+		real_SDL_UpdateTexture(texture, rect, pixels, pitch);
+	if (frame) AVProfile_end(&av_profile, AV_UPLOAD, upload_started);
+	if (frame && frame->surface) frame->ready = result == 0;
 	FastScreen *screen = FastScreen_find(texture);
+	if (screen) screen->ready = 0;
 	if (result == 0 && screen) {
-		screen->ready = 0;
 		if (!rect || (rect->x == 0 && rect->y == 0 &&
 			rect->w == FAST_SCALE_SOURCE_WIDTH && rect->h == FAST_SCALE_SOURCE_HEIGHT)) {
+			Uint64 started = AVProfile_now(&av_profile);
 			FastScreen_update(screen, pixels, pitch);
+			AVProfile_end(&av_profile, AV_SHRINK, started);
 		}
 	}
 	return result;
 }
 
 void SDL_DestroyTexture(SDL_Texture *texture) {
+	ScreenFrame *frame = ScreenFrame_find(texture);
+	if (frame) {
+		GameUpload_reset(&game_uploads[frame - screen_frames], real_SDL_DestroyTexture);
+		DisplayScreen_reset(&display_screens[frame - screen_frames]);
+		ScreenFrame_reset(frame);
+	}
 	FastScreen *screen = FastScreen_find(texture);
 	if (screen) FastScreen_reset(screen);
 	if (texture==app.screens[0]) {
@@ -3584,7 +3747,7 @@ void SDL_DestroyTexture(SDL_Texture *texture) {
 	real_SDL_DestroyTexture(texture);
 }
 
-int SDL_PollEvent(SDL_Event* event) {
+static int App_pollEvent(SDL_Event* event) {
 	
 	// loop is required to capture button presses
 	while (1) {
@@ -3646,17 +3809,91 @@ int SDL_PollEvent(SDL_Event* event) {
 	}
 }
 
+int SDL_PollEvent(SDL_Event *event) {
+	int detail_game = av_profile.detail && !app.menu && !in_drastic_menu && loader.state == LOADER_IDLE;
+	Uint64 started = detail_game ? AVProfile_now(&av_profile) : 0;
+	int result = App_pollEvent(event);
+	if (detail_game && av_profile.last_frame && !app.menu && loader.state == LOADER_IDLE)
+		AVProfile_end(&av_profile, AV_INPUT, started);
+	return result;
+}
+
 int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained) {
-	int result = real_SDL_OpenAudio(desired, obtained);
+	SDL_AudioSpec requested;
+	SDL_AudioSpec wrapped;
+	int wrap = av_profile.enabled && desired && desired->callback && !av_profile.callback;
+	if (desired) requested = *desired;
+	if (wrap) {
+		wrapped = *desired;
+		av_profile.callback = desired->callback;
+		av_profile.audio_userdata = desired->userdata;
+		av_profile.last_audio = 0;
+		AVProfile_audioSpec(&av_profile, desired);
+		av_profile.ring_read = av_profile.ring_write = NULL;
+		av_profile.known_delay_sites = 0;
+		// Do not inspect private audio memory for a different DraStic build/callback.
+		if (desired->userdata && (uintptr_t)desired->callback == app.base + 0x8c450) {
+			static const size_t offsets[] = {0x8c460, 0x8c470, 0x8c478, 0x8c484};
+			static const uint32_t signatures[] = {0x91410016, 0x29414ec0, 0x12003e73, 0x54001283};
+			int match = 1;
+			for (size_t i=0; i<NUMBER_OF(offsets); i++) {
+				uint32_t instruction;
+				memcpy(&instruction, (const void *)(app.base + offsets[i]), sizeof(instruction));
+				if (instruction != signatures[i]) match = 0;
+			}
+			if (match) {
+				av_profile.ring_read = (const uint32_t *)((const Uint8 *)desired->userdata + 0x40008);
+				av_profile.ring_write = (const uint32_t *)((const Uint8 *)desired->userdata + 0x4000c);
+				static const size_t delay_offsets[] = {0x88674, 0x89ff0, 0x8a000, 0x8a0e4, 0xee34};
+				static const uint32_t delay_signatures[] = {0x9400065f, 0x5289ba61, 0x17fe0e14, 0x97fe0ddb, 0x9401ec6f};
+				av_profile.known_delay_sites = 1;
+				for (size_t i=0; i<NUMBER_OF(delay_offsets); i++) {
+					uint32_t instruction;
+					memcpy(&instruction, (const void *)(app.base + delay_offsets[i]), sizeof(instruction));
+					if (instruction != delay_signatures[i]) av_profile.known_delay_sites = 0;
+				}
+			}
+		}
+		wrapped.callback = AVProfile_audioCallback;
+		wrapped.userdata = &av_profile;
+	}
+	int result = real_SDL_OpenAudio(wrap ? &wrapped : desired, obtained);
+	if (result == 0 && desired) {
+		const SDL_AudioSpec *actual = obtained ? obtained : (wrap ? &wrapped : desired);
+		if (wrap) {
+			AVProfile_audioSpec(&av_profile, actual);
+			if (!obtained) { desired->size = wrapped.size; desired->silence = wrapped.silence; }
+		}
+		const char *driver = SDL_GetCurrentAudioDriver();
+		SDL_Log("Audio driver=%s; requested rate=%d format=0x%x channels=%u samples=%u; obtained rate=%d format=0x%x channels=%u samples=%u; ring_probe=%s",
+			driver ? driver : "unknown", requested.freq, requested.format, requested.channels, requested.samples,
+			actual->freq, actual->format, actual->channels, actual->samples,
+			wrap && av_profile.ring_read ? "enabled" : "disabled");
+		if (av_profile.detail) SDL_Log("AV detail: delay_callsite_probe=%s",
+			av_profile.known_delay_sites ? "enabled" : "disabled");
+	} else {
+		if (wrap) {
+			av_profile.callback = NULL;
+			av_profile.audio_userdata = NULL;
+			av_profile.ring_read = av_profile.ring_write = NULL;
+			av_profile.known_delay_sites = 0;
+		}
+		SDL_Log("SDL_OpenAudio failed: %s", SDL_GetError());
+	}
 	Settings_setVolume(settings.volume); // must be done here (or later)
 	return result;
 }
 
 void SDL_Delay(uint32_t ms) {
+	Uint32 requested = ms;
+	int detail = AVProfile_isFrameThread(&av_profile) && av_profile.last_frame;
+	Uint64 started = detail ? AVProfile_now(&av_profile) : 0;
 	if (ms>16) {
 		ms = 16;
 	}
 	real_SDL_Delay(ms);
+	if (detail) AVProfile_delay(&av_profile,
+		(uintptr_t)__builtin_extract_return_addr(__builtin_return_address(0)), requested, ms, started);
 }
 
 // --------------------------------------------
@@ -3829,8 +4066,14 @@ static inline void hook(void) {
 static drastic_main_t drastic_main = NULL;
 static int override_args(int argc, char **argv, char **envp) {
 	hook();
+	const char *profile = getenv("DRASTIC_PROFILE");
+	int profile_level = profile && strcmp(profile, "2") == 0 ? 2 : profile && strcmp(profile, "1") == 0 ? 1 : 0;
+	AVProfile_init(&av_profile, profile_level);
+	av_profile.executable_base = app.base;
+	if (av_profile.detail) SDL_Log("AV detail: enabled; thread CPU clock=%s; system reads once per 5 seconds",
+		av_profile.cpu_available ? "available" : "unavailable");
 	App_init();
-	Config_set_hires_3d(Config_get_hires_3d());
+	Config_set_hires_3d(settings.display_mode == DISPLAY_HIRES);
 	char *new_argv[] = { argv[0], app.game_path, NULL };
 	
 	puts("[LOAD] resume requested");

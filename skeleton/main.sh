@@ -3,6 +3,9 @@
 SDCARD_PATH=/mnt/SDCARD
 export PATH=$SDCARD_PATH/system/bin:$PATH
 export LD_LIBRARY_PATH=$SDCARD_PATH/system/lib:$LD_LIBRARY_PATH
+export DRASTIC_RENDERER=opengles2
+export DRASTIC_PROFILE=0
+export DRASTIC_UPLOAD_BUFFERS=1
 
 # update
 if [ -f $SDCARD_PATH/system.zip ]; then
